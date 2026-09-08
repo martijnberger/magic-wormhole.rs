@@ -14,7 +14,7 @@
 //! "leader" side and one "follower" side (formerly called "sender" and "receiver").
 
 use crate::{Key, KeyPurpose, core::key::GenericKey};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_family = "wasm"))]
 use async_net::{TcpListener, TcpStream};
@@ -754,8 +754,9 @@ pub async fn init(
             )
             .await
             .map_err(|_| StunError::Timeout)
+            .flatten()
             {
-                Ok(Ok((external_ip, stream))) => {
+                Ok((external_ip, stream)) => {
                     tracing::debug!("Our external IP address is {}", external_ip);
                     our_hints.direct_tcp.insert(DirectHint {
                         hostname: external_ip.ip().to_string(),
@@ -768,9 +769,7 @@ pub async fn init(
                     );
                     stream.into()
                 },
-                // TODO replace with .flatten() once stable
-                // https://github.com/rust-lang/rust/issues/70142
-                Err(err) | Ok(Err(err)) => {
+                Err(err) => {
                     tracing::warn!("Failed to get external address via STUN, {}", err);
                     let socket =
                         socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None)?;
@@ -822,10 +821,8 @@ pub async fn init(
 
         sockets = create_sockets
             .await
-            // TODO replace with inspect_err once stable
-            .map_err(|err| {
+            .inspect_err(|err| {
                 tracing::error!("Failed to create direct hints for our side: {}", err);
-                err
             })
             .ok();
     }

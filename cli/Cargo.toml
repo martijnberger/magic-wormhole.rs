@@ -21,13 +21,13 @@ path = "src/main.rs"
 async-channel = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 serde_json = { workspace = true }
-serde_derive = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 futures = { workspace = true }
 rand = { workspace = true }
 smol = { workspace = true }
 
 # CLI specific dependencies
+anyhow = "1.0.104"
 magic-wormhole = { path = "..", version = "0.8.1", default-features = false, features = [
     "transfer",
     "forwarding",
@@ -35,11 +35,9 @@ magic-wormhole = { path = "..", version = "0.8.1", default-features = false, fea
 ] }
 clap = { workspace = true, features = ["cargo", "derive", "help", "env"] }
 clap_complete = { workspace = true }
-env_logger = { workspace = true }
 console = { workspace = true }
 indicatif = { workspace = true }
 dialoguer = { workspace = true, features = ["completion"] }
-color-eyre = { workspace = true }
 unit-prefix = { workspace = true }
 ctrlc = { workspace = true }
 qr2term = { workspace = true }

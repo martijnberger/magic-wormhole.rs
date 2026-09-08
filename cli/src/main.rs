@@ -9,14 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context;
 use clap::{Args, CommandFactory, Parser, Subcommand};
-use color_eyre::{
-    eyre::{self, Context},
-    owo_colors::OwoColorize,
-};
 use completer::enter_code;
 use console::{Term, style};
-use futures::{Future, future::Either};
+use futures::future::Either;
 use indicatif::{MultiProgress, ProgressBar};
 use magic_wormhole::{
     MailboxConnection, ParseCodeError, ParsePasswordError, Wormhole, forwarding, transfer,
@@ -276,13 +273,11 @@ struct WormholeCli {
     no_color: bool,
 }
 
-fn main() -> eyre::Result<()> {
+fn main() -> anyhow::Result<()> {
     smol::block_on(async_main())
 }
 
-async fn async_main() -> eyre::Result<()> {
-    color_eyre::install()?;
-
+async fn async_main() -> anyhow::Result<()> {
     let app = WormholeCli::parse();
 
     let mut term = Term::stdout();
@@ -449,7 +444,7 @@ async fn async_main() -> eyre::Result<()> {
                         match target.rsplit_once(':') {
                             Some((host, port)) => {
                                 let host = url::Host::parse(host)
-                                    .map_err(eyre::Error::from)
+                                    .map_err(anyhow::Error::from)
                                     .context("Invalid host")?;
                                 let port: u16 = port.parse().context("Invalid port")?;
                                 Ok((Some(host), port))
@@ -459,7 +454,7 @@ async fn async_main() -> eyre::Result<()> {
                                 target
                                     .parse::<u16>()
                                     .map(|port| (None, port))
-                                    .map_err(eyre::Error::from)
+                                    .map_err(anyhow::Error::from)
                                     .context("Invalid port")
                             },
                         }
@@ -588,7 +583,7 @@ fn parse_transit_args(args: &CommonArgs) -> transit::Abilities {
 }
 
 type PrintCodeFn =
-    dyn Fn(&mut Term, &magic_wormhole::Code, &Option<url::Url>, bool) -> eyre::Result<()>;
+    dyn Fn(&mut Term, &magic_wormhole::Code, &Option<url::Url>, bool) -> anyhow::Result<()>;
 
 /**
  * Parse the necessary command line arguments to establish an initial server connection.
@@ -606,7 +601,7 @@ async fn parse_and_connect(
     is_send: bool,
     mut app_config: magic_wormhole::AppConfig<impl serde::Serialize + Send + Sync + 'static>,
     print_code: Option<&PrintCodeFn>,
-) -> eyre::Result<(Wormhole, magic_wormhole::Code, Vec<transit::RelayHint>)> {
+) -> anyhow::Result<(Wormhole, magic_wormhole::Code, Vec<transit::RelayHint>)> {
     // TODO handle relay servers with multiple endpoints better
     let mut relay_hints: Vec<transit::RelayHint> = common_args
         .relay_server
@@ -717,16 +712,16 @@ async fn parse_and_connect(
     print_welcome(term, mailbox_connection.welcome())?;
     let code = mailbox_connection.code().clone();
     let wormhole = Wormhole::connect(mailbox_connection).await?;
-    eyre::Result::<_>::Ok((wormhole, code, relay_hints))
+    anyhow::Result::<_>::Ok((wormhole, code, relay_hints))
 }
 
 async fn make_send_offer(
     mut files: Vec<PathBuf>,
     file_name: Option<String>,
-) -> eyre::Result<transfer::offer::OfferSend> {
+) -> anyhow::Result<transfer::offer::OfferSend> {
     for file in &files {
         let path = std::path::PathBuf::from(file);
-        eyre::ensure!(
+        anyhow::ensure!(
             smol::unblock(move || path.exists()).await,
             "{} does not exist",
             file.display()
@@ -745,26 +740,26 @@ async fn make_send_offer(
             let file_name = file
                 .file_name()
                 .ok_or_else(|| {
-                    eyre::format_err!("You can't send a file without a name. Maybe try --rename")
+                    anyhow::format_err!("You can't send a file without a name. Maybe try --rename")
                 })?
                 .to_str()
-                .ok_or_else(|| eyre::format_err!("File path must be a valid UTF-8 string"))?
+                .ok_or_else(|| anyhow::format_err!("File path must be a valid UTF-8 string"))?
                 .to_owned();
             Ok(transfer::offer::OfferSend::new_file_or_folder(file_name, file).await?)
         },
-        (_, Some(_)) => Err(eyre::format_err!(
+        (_, Some(_)) => Err(anyhow::format_err!(
             "Can't customize file name when sending multiple files"
         )),
         (_, None) => {
             let mut names = std::collections::BTreeMap::new();
             for path in &files {
-                eyre::ensure!(
+                anyhow::ensure!(
                     path.file_name().is_some(),
                     "'{}' has no name. You need to send it separately and use the --rename flag, or rename it on the file system",
                     path.display()
                 );
                 if let Some(old) = names.insert(path.file_name(), path) {
-                    eyre::bail!(
+                    anyhow::bail!(
                         "'{}' and '{}' have the same file name. Rename one of them on disk, or send them in separate transfers",
                         old.display(),
                         path.display(),
@@ -807,7 +802,7 @@ fn create_progress_handler(pb: ProgressBar) -> impl FnMut(u64, u64) {
     }
 }
 
-fn print_welcome(term: &mut Term, welcome: Option<&str>) -> eyre::Result<()> {
+fn print_welcome(term: &mut Term, welcome: Option<&str>) -> anyhow::Result<()> {
     if let Some(welcome) = &welcome {
         writeln!(term, "Got welcome from server: {welcome}")?;
     }
@@ -820,7 +815,7 @@ fn sender_print_code(
     code: &magic_wormhole::Code,
     rendezvous_server: &Option<url::Url>,
     no_qr: bool,
-) -> eyre::Result<()> {
+) -> anyhow::Result<()> {
     let uri = magic_wormhole::uri::WormholeTransferUri {
         code: code.clone(),
         rendezvous_server: rendezvous_server.clone(),
@@ -870,7 +865,7 @@ fn server_print_code(
     code: &magic_wormhole::Code,
     _: &Option<url::Url>,
     _qr: bool,
-) -> eyre::Result<()> {
+) -> anyhow::Result<()> {
     if cfg!(feature = "clipboard") {
         writeln!(
             term,
@@ -899,7 +894,7 @@ async fn send(
     relay_hints: Vec<transit::RelayHint>,
     offer: transfer::offer::OfferSend,
     transit_abilities: transit::Abilities,
-) -> eyre::Result<()> {
+) -> anyhow::Result<()> {
     let pb = create_progress_bar(0);
     let pb2 = pb.clone();
     transfer::send(
@@ -927,7 +922,7 @@ async fn send_many(
     wormhole: Wormhole,
     term: &mut Term,
     transit_abilities: transit::Abilities,
-) -> eyre::Result<()> {
+) -> anyhow::Result<()> {
     tracing::warn!(
         "Reminder that you are sending the file to multiple people, and this may reduce the overall security. See the help page for more information."
     );
@@ -989,7 +984,7 @@ async fn send_many(
         mp: &MultiProgress,
         transit_abilities: transit::Abilities,
         cancel: impl Future<Output = ()> + Send + 'static,
-    ) -> eyre::Result<()> {
+    ) -> anyhow::Result<()> {
         writeln!(&mut term, "Sending file to peer").unwrap();
         let pb = create_progress_bar(0);
         let pb = mp.add(pb);
@@ -1006,7 +1001,7 @@ async fn send_many(
                     cancel,
                 )
                 .await?;
-                eyre::Result::<_>::Ok(())
+                anyhow::Result::<_>::Ok(())
             };
             match result.await {
                 Ok(_) => {
@@ -1032,7 +1027,7 @@ async fn receive(
     target_dir: &std::path::Path,
     noconfirm: bool,
     transit_abilities: transit::Abilities,
-) -> eyre::Result<()> {
+) -> anyhow::Result<()> {
     #[cfg(not(feature = "experimental-transfer-v2"))]
     {
         let req = transfer::request_file(wormhole, relay_hints, transit_abilities, ctrlc_handler())
@@ -1068,7 +1063,7 @@ async fn receive_inner_v1(
     req: transfer::ReceiveRequestV1,
     target_dir: &std::path::Path,
     noconfirm: bool,
-) -> eyre::Result<()> {
+) -> anyhow::Result<()> {
     use smol::fs::OpenOptions;
 
     /*
@@ -1085,12 +1080,12 @@ async fn receive_inner_v1(
             match should_use_color() {
                 true => format!(
                     "Receive file '{}' ({})?",
-                    req.file_name().green().bold(),
-                    match NumberPrefix::binary(req.file_size() as f64) {
+                    style(req.file_name()).green().bold(),
+                    style(match NumberPrefix::binary(req.file_size() as f64) {
                         NumberPrefix::Standalone(bytes) => format!("{bytes} bytes"),
                         NumberPrefix::Prefixed(prefix, n) =>
                             format!("{:.1} {}B", n, prefix.symbol()),
-                    }
+                    })
                     .blue()
                     .bold(),
                 ),
@@ -1140,7 +1135,7 @@ async fn receive_inner_v1(
         if should_use_color() {
             format!(
                 "Override existing file {}?",
-                file_path.display().red().bold()
+                style(file_path.display()).red().bold()
             )
         } else {
             format!("Override existing file {}?", file_path.display())
@@ -1173,7 +1168,7 @@ async fn receive_inner_v2(
     req: transfer::ReceiveRequestV2,
     target_dir: &std::path::Path,
     noconfirm: bool,
-) -> eyre::Result<()> {
+) -> anyhow::Result<()> {
     let offer = req.offer();
     let file_size = offer.total_size();
     let offer_name = offer.offer_name();
@@ -1243,7 +1238,7 @@ async fn receive_inner_v2(
             let path = std::path::PathBuf::from(&target_path);
             let dest = path.clone();
             if smol::unblock(move || dest.exists()).await {
-                eyre::bail!(
+                anyhow::bail!(
                     "Target destination {} exists, you can manually extract the file from {}",
                     target_path.display(),
                     tmp_dir.display(),
@@ -1271,13 +1266,18 @@ fn transit_handler(info: TransitInfo) {
     let use_color = should_use_color();
 
     let conn_type = if use_color {
-        info.conn_type.bright_magenta().bold().to_string()
+        style(&info.conn_type)
+            .for_stderr()
+            .magenta()
+            .bright()
+            .bold()
+            .to_string()
     } else {
         info.conn_type.to_string()
     };
 
     let peer_addr = if use_color {
-        info.peer_addr.cyan().bold().to_string()
+        style(info.peer_addr).for_stderr().cyan().bold().to_string()
     } else {
         info.peer_addr.to_string()
     };

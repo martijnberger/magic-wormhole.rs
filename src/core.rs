@@ -7,7 +7,7 @@ mod test;
 /// Module for wormhole code generation and completion.
 pub mod wordlist;
 
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, str::FromStr};
 use thiserror::Error;
 
@@ -106,9 +106,15 @@ impl<V: serde::Serialize + Send + Sync + 'static> MailboxConnection<V> {
     /// # Examples
     ///
     /// ```no_run
-    /// # fn main() -> eyre::Result<()> { async_io::block_on(async {
-    /// use magic_wormhole::{AppConfig, MailboxConnection, transfer::APP_CONFIG};
-    /// let config = APP_CONFIG;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> { async_io::block_on(async {
+    /// use magic_wormhole::{
+    ///     AppConfig, AppID, MailboxConnection, rendezvous::DEFAULT_RENDEZVOUS_SERVER,
+    /// };
+    /// let config = AppConfig {
+    ///     id: AppID::new("example.org/my-app"),
+    ///     rendezvous_url: DEFAULT_RENDEZVOUS_SERVER.into(),
+    ///     app_version: (),
+    /// };
     /// let mailbox_connection = MailboxConnection::create(config, 2).await?;
     /// # Ok(()) })}
     /// ```
@@ -130,15 +136,18 @@ impl<V: serde::Serialize + Send + Sync + 'static> MailboxConnection<V> {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(feature = "entropy")]
-    /// # {
-    /// # fn main() -> eyre::Result<()> { async_io::block_on(async {
-    /// use magic_wormhole::{MailboxConnection, transfer::APP_CONFIG};
-    /// let config = APP_CONFIG;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> { async_io::block_on(async {
+    /// use magic_wormhole::{
+    ///     AppConfig, AppID, MailboxConnection, rendezvous::DEFAULT_RENDEZVOUS_SERVER,
+    /// };
+    /// let config = AppConfig {
+    ///     id: AppID::new("example.org/my-app"),
+    ///     rendezvous_url: DEFAULT_RENDEZVOUS_SERVER.into(),
+    ///     app_version: (),
+    /// };
     /// let mailbox_connection =
-    ///     MailboxConnection::create_with_password(config, "secret".parse()?).await?;
+    ///     MailboxConnection::create_with_password(config, "secret-code-password".parse()?).await?;
     /// # Ok(()) })}
-    /// # }
     /// ```
     ///
     /// TODO: Replace this with create_with_validated_password
@@ -186,10 +195,16 @@ impl<V: serde::Serialize + Send + Sync + 'static> MailboxConnection<V> {
     /// # Examples
     ///
     /// ```no_run
-    /// # fn main() -> eyre::Result<()> { async_io::block_on(async {
-    /// use magic_wormhole::{Code, MailboxConnection, Nameplate, transfer::APP_CONFIG};
-    /// let config = APP_CONFIG;
-    /// let code = "5-password".parse()?;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> { async_io::block_on(async {
+    /// use magic_wormhole::{
+    ///     AppConfig, AppID, MailboxConnection, rendezvous::DEFAULT_RENDEZVOUS_SERVER,
+    /// };
+    /// let config = AppConfig {
+    ///     id: AppID::new("example.org/my-app"),
+    ///     rendezvous_url: DEFAULT_RENDEZVOUS_SERVER.into(),
+    ///     app_version: (),
+    /// };
+    /// let code = "5-secret-code-password".parse()?;
     /// let mailbox_connection = MailboxConnection::connect(config, code, false).await?;
     /// # Ok(()) })}
     /// ```
@@ -230,19 +245,20 @@ impl<V: serde::Serialize + Send + Sync + 'static> MailboxConnection<V> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// # fn main() -> eyre::Result<()> { use magic_wormhole::WormholeError;
-    /// # #[cfg(feature = "entropy")]
-    /// return async_io::block_on(async {
-    /// use magic_wormhole::{transfer::APP_CONFIG, MailboxConnection, Mood};
-    /// let config = APP_CONFIG;
-    /// let mailbox_connection = MailboxConnection::create_with_password(config, "secret-code-password".parse()?)
-    ///     .await?;
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> { async_io::block_on(async {
+    /// use magic_wormhole::{
+    ///     AppConfig, AppID, MailboxConnection, Mood, rendezvous::DEFAULT_RENDEZVOUS_SERVER,
+    /// };
+    /// let config = AppConfig {
+    ///     id: AppID::new("example.org/my-app"),
+    ///     rendezvous_url: DEFAULT_RENDEZVOUS_SERVER.into(),
+    ///     app_version: (),
+    /// };
+    /// let mailbox_connection =
+    ///     MailboxConnection::create_with_password(config, "secret-code-password".parse()?).await?;
     /// mailbox_connection.shutdown(Mood::Happy).await?;
-    /// # Ok(())});
-    /// # #[cfg(not(feature = "entropy"))]
-    /// # return Ok(());
-    /// # }
+    /// # Ok(()) })}
     /// ```
     pub async fn shutdown(self, mood: Mood) -> Result<(), WormholeError> {
         self.server

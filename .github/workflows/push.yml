@@ -119,7 +119,7 @@ jobs:
         run: cargo build --locked -p magic-wormhole --target ${{ matrix.target }} --no-default-features
       - name: test library (no default features)
         if: ${{ matrix.os != 'WASM' }}
-        run: cargo test --locked -p magic-wormhole --target ${{ matrix.target }} --lib --no-default-features
+        run: cargo test --locked -p magic-wormhole --target ${{ matrix.target }} --no-default-features
       - name: build library (features=transit)
         run: cargo build --locked -p magic-wormhole --target ${{ matrix.target }} --no-default-features --features=transit
       - name: build library (features=transfer)
@@ -234,6 +234,7 @@ jobs:
           toolchain: nightly
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
+          arguments: --workspace --all-features --locked
           rust-version: ${{ needs.read_msrv.outputs.msrv }}
 
   semver:

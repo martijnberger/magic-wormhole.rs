@@ -5,7 +5,7 @@ use crypto_secretbox::{
     aead::{Aead, AeadCore, generic_array::GenericArray},
 };
 use hkdf::Hkdf;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, digest::FixedOutput};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 

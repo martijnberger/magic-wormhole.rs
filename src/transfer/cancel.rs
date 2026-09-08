@@ -10,7 +10,7 @@ pub async fn cancellable<T>(
     cancel: impl Future<Output = ()>,
 ) -> Result<T, Cancelled> {
     use futures::future::Either;
-    futures::pin_mut!(cancel);
+    let cancel = std::pin::pin!(cancel);
     match futures::future::select(cancel, future).await {
         Either::Left(((), _)) => Err(Cancelled),
         Either::Right((val, _)) => Ok(val),
@@ -83,7 +83,7 @@ pub(super) use with_cancel_transit;
 /// Run a future with timeout and cancellation, ignore errors
 async fn wrap_timeout(run: impl Future<Output = ()>, cancel: impl Future<Output = ()>) {
     let run = timeout(SHUTDOWN_TIME, run);
-    futures::pin_mut!(run);
+    let run = std::pin::pin!(run);
     match cancellable(run, cancel).await {
         Ok(Ok(())) => {},
         Ok(Err(_timeout)) => tracing::debug!("Post-transfer timed out"),
@@ -200,7 +200,7 @@ pub async fn handle_run_result_noclose<T, C: Future<Output = ()>>(
                     );
                     debug_err(wormhole.close().await, "close Wormhole");
                 },
-                futures::future::pending(),
+                std::future::pending(),
             )
             .await;
             Ok(None)
@@ -289,7 +289,7 @@ pub async fn handle_run_result_transit<T>(
                         "notify peer about our cancellation",
                     );
                 },
-                futures::future::pending(),
+                std::future::pending(),
             )
             .await;
             Ok(None)

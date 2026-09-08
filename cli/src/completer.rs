@@ -1,6 +1,5 @@
 use std::sync::LazyLock;
 
-use color_eyre::eyre;
 use dialoguer::{Completion, Input};
 use magic_wormhole::Wordlist;
 
@@ -20,7 +19,7 @@ impl Completion for CustomCompletion {
     }
 }
 
-pub fn enter_code() -> eyre::Result<String> {
+pub fn enter_code() -> anyhow::Result<String> {
     let custom_completion = CustomCompletion::default();
 
     Input::new()

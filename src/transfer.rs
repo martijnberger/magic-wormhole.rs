@@ -9,13 +9,12 @@
 //! They are used to set up a [transit] portal and to exchange a file offer/accept. Then, the file is transmitted over the transit relay.
 
 use futures::{AsyncRead, AsyncWrite};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::json;
 use std::sync::Arc;
 
 use super::{AppID, Wormhole, core::WormholeError, transit};
-use futures::Future;
 use std::{borrow::Cow, collections::BTreeMap};
 
 #[cfg(not(target_family = "wasm"))]

@@ -1,5 +1,5 @@
 use futures::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, digest::FixedOutput};
 
 use crate::transit::TransitRole;
@@ -162,7 +162,7 @@ pub async fn send(
     cancel: impl Future<Output = ()>,
 ) -> Result<(), TransferError> {
     let peer_abilities = peer_version.transfer_v2.unwrap();
-    futures::pin_mut!(cancel);
+    let cancel = std::pin::pin!(cancel);
 
     /* Establish transit connection, close the Wormhole and switch to using the transit connection (msgpack instead of json) */
     let (mut transit, wormhole, cancel) = cancel::with_cancel_wormhole!(
@@ -338,7 +338,7 @@ pub async fn request(
     cancel: impl Future<Output = ()>,
 ) -> Result<Option<ReceiveRequest>, TransferError> {
     let peer_abilities = peer_version.transfer_v2.unwrap();
-    futures::pin_mut!(cancel);
+    let cancel = std::pin::pin!(cancel);
 
     /* Establish transit connection, close the Wormhole and switch to using the transit connection (msgpack instead of json) */
     let ((mut transit, info), wormhole, cancel) = cancel::with_cancel_wormhole!(
@@ -424,7 +424,7 @@ impl ReceiveRequest {
         cancel: impl Future<Output = ()>,
     ) -> Result<(), TransferError> {
         transit_handler(self.info);
-        futures::pin_mut!(cancel);
+        let cancel = std::pin::pin!(cancel);
 
         let mut transit = self.transit;
         cancel::with_cancel_transit!(

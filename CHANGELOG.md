@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enable rustls with bundled WebPKI roots by default for the library and CLI, including the CLI's `all` feature. Keep `native-tls` as an explicit alternative and allow opting out with `--no-default-features`.
 - Update dependencies, including `async-tungstenite` 0.35, `base64` 0.23, `sha1` 0.11 (replacing `sha-1`), and stable `noise-rust-crypto` 0.6.2; retain Rust 1.92 support.
 - Replace deprecated time formatting and transfer test APIs.
+- lib: Use standard-library pinning, future, result, and map helpers; simplify hashcash counter and salt generation while preserving its format.
+- lib: Remove `futures-concurrency` and test-only `eyre`; use standard boxed errors in examples and tests while retaining typed public errors.
+- cli: Replace `color-eyre` with `anyhow` and the existing `console` color helpers. Errors use concise reports with context chains.
+- dev: Remove unused CLI logging dependencies, use tracing-only test logging, and import derive macros through Serde.
+- dev: Make core documentation examples compile without optional transfer features and remove obsolete entropy feature guards.
+- dev: Include the CLI in cargo-deny checks and record version-scoped license exceptions for its existing Windows and Wayland clipboard dependencies.
 - dev: Make core library tests compile without the optional transfer and transit features, and cover this configuration in CI.
 - dev: Update GitHub Actions dependencies, fix the MSRV test matrix and cargo-deny job dependency, and check the entire workspace with strict Clippy and a locked dependency graph.
 

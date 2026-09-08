@@ -44,7 +44,7 @@ pub async fn cancellable<T>(
     cancel: impl Future<Output = ()>,
 ) -> Result<T, Cancelled> {
     use futures::future::Either;
-    futures::pin_mut!(cancel);
+    let cancel = std::pin::pin!(cancel);
     match futures::future::select(future, cancel).await {
         Either::Left((val, _)) => Ok(val),
         Either::Right(((), _)) => Err(Cancelled),
