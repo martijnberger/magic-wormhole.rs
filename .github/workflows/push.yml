@@ -12,7 +12,7 @@ jobs:
     name: Read MSRV
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust (stable)
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Read MSRV from workspace manifest
@@ -31,7 +31,7 @@ jobs:
     name: Cargo Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Ensure rustfmt is installed and setup problem matcher
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -44,14 +44,14 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cache ~/.cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo
           key: ${{ runner.os }}-clippy-dotcargo
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: target
           key: ${{ runner.os }}-clippy-cargo-build-target
@@ -60,7 +60,7 @@ jobs:
           toolchain: stable
           components: clippy
       - name: cargo clippy
-        run: cargo clippy --all-features
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   test:
     name: "Test (${{ matrix.os }} ${{ matrix.channel }})"
@@ -71,7 +71,7 @@ jobs:
       fail-fast: false
       matrix:
         channel:
-          - MSRV
+          - msrv
           - stable
         os:
           - Linux
@@ -100,36 +100,39 @@ jobs:
           - channel: stable
             rust: stable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
           target: wasm32-unknown-unknown
       - name: Cache ~/.cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo
           key: ${{ runner.os }}-test-dotcargo-${{ matrix.rust }}
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: target
           key: ${{ runner.os }}-test-build-target-${{ matrix.rust }}
       - name: build library (no default features)
-        run: cargo build -p magic-wormhole --target ${{ matrix.target }} --no-default-features
+        run: cargo build --locked -p magic-wormhole --target ${{ matrix.target }} --no-default-features
+      - name: test library (no default features)
+        if: ${{ matrix.os != 'WASM' }}
+        run: cargo test --locked -p magic-wormhole --target ${{ matrix.target }} --lib --no-default-features
       - name: build library (features=transit)
-        run: cargo build -p magic-wormhole --target ${{ matrix.target }} --no-default-features --features=transit
+        run: cargo build --locked -p magic-wormhole --target ${{ matrix.target }} --no-default-features --features=transit
       - name: build library (features=transfer)
-        run: cargo build -p magic-wormhole --target ${{ matrix.target }} --no-default-features --features=transfer
+        run: cargo build --locked -p magic-wormhole --target ${{ matrix.target }} --no-default-features --features=transfer
       - name: build library (features=forwarding)
         if: ${{ matrix.os != 'WASM' }}
-        run: cargo build -p magic-wormhole --target ${{ matrix.target }} --no-default-features --features=forwarding
+        run: cargo build --locked -p magic-wormhole --target ${{ matrix.target }} --no-default-features --features=forwarding
       - name: build CLI
         if: ${{ matrix.os != 'WASM' }}
-        run: cargo build -p magic-wormhole-cli --target ${{ matrix.target }} --features=all
+        run: cargo build --locked -p magic-wormhole-cli --target ${{ matrix.target }} --features=all
       - name: build WASM
         if: ${{ matrix.os == 'WASM' }}
-        run: cargo build -p magic-wormhole --target wasm32-unknown-unknown --no-default-features --features ${{ matrix.features }}
+        run: cargo build --locked -p magic-wormhole --target wasm32-unknown-unknown --no-default-features --features ${{ matrix.features }}
       - name: test
         uses: nick-fields/retry@v3
         with:
@@ -137,7 +140,7 @@ jobs:
           polling_interval_seconds: 30
           timeout_minutes: 30
           retry_on_exit_code: 101
-          command: cargo test --verbose --workspace --features ${{ matrix.features }}
+          command: cargo test --locked --verbose --workspace --features ${{ matrix.features }}
 
   dist:
     name: "Dist (${{ matrix.os }})"
@@ -163,30 +166,30 @@ jobs:
             target: aarch64-apple-darwin
             ext: ""
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           target: ${{ matrix.target }}
       - name: Cache ~/.cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo
           key: ${{ runner.os }}-test-dotcargo-stable
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: target
           key: ${{ runner.os }}-test-build-target-stable
       - name: Build
-        run: cargo build -p magic-wormhole-cli --target ${{ matrix.target }} --bins --locked --release
+        run: cargo build --locked -p magic-wormhole-cli --target ${{ matrix.target }} --bins --release
       - name: Tar binaries
         run: |
           pushd "target/${{ matrix.target }}/release/"
           tar -cvzf "magic-wormhole-cli-${{ matrix.target }}.tgz" "wormhole-rs${{ matrix.ext }}"
           popd
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: magic-wormhole-cli-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/magic-wormhole-cli-${{ matrix.target }}.tgz
@@ -196,7 +199,7 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
@@ -204,32 +207,31 @@ jobs:
         with:
           tool: cargo-tarpaulin
       - name: Cache ~/.cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo
           key: ${{ runner.os }}-coverage-dotcargo
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: target
           key: ${{ runner.os }}-coverage-cargo-build-target
       - name: Run tarpaulin
-        run: cargo tarpaulin --workspace --out Xml
+        run: cargo tarpaulin --workspace --locked --out Xml
       - name: upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   cargo-deny:
     name: Cargo deny
+    needs: read_msrv
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
-      - name: Checkout Rust toolcnain
-        uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           rust-version: ${{ needs.read_msrv.outputs.msrv }}
@@ -238,7 +240,7 @@ jobs:
     name: SemVer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
@@ -259,7 +261,7 @@ jobs:
     needs:
       - dist
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Get Cargo Version
         id: query-version
         run: |
@@ -289,7 +291,7 @@ jobs:
         with:
           command: query
           version: unreleased
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: "./dist"
           pattern: "magic-wormhole-cli-*"

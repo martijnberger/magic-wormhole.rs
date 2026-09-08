@@ -28,7 +28,7 @@ use transit::{
 mod cancel;
 #[doc(hidden)]
 pub mod offer;
-mod v1;
+pub(crate) mod v1;
 #[cfg(feature = "experimental-transfer-v2")]
 #[allow(missing_docs)]
 mod v2;
@@ -593,6 +593,10 @@ where
  */
 #[must_use]
 #[cfg(feature = "experimental-transfer-v2")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Boxing the variants would change the public transfer API"
+)]
 pub enum ReceiveRequest {
     /// A protocol version 1 receive request
     V1(ReceiveRequestV1),

@@ -19,9 +19,9 @@ jobs:
     name: Audit Rust Dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cache ~/.cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           # we specifically want ~/.cargo/bin/cargo-audit
           # and ~/.cargo/.crates.toml and .crates2.json

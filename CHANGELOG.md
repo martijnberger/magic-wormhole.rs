@@ -9,7 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- lib: support for encrypted websocket connections through `futures-rustls` as a future replacement for the `async-tls` dependency
+- lib: Support encrypted WebSocket connections through `futures-rustls` with configurable certificate trust stores.
+
+### Security
+
+- lib: Route the existing `tls` feature through `futures-rustls` with bundled WebPKI roots, removing the old `async-tls` dependency chain affected by [RUSTSEC-2026-0098](https://rustsec.org/advisories/RUSTSEC-2026-0098), [RUSTSEC-2026-0099](https://rustsec.org/advisories/RUSTSEC-2026-0099), and [RUSTSEC-2026-0104](https://rustsec.org/advisories/RUSTSEC-2026-0104).
+- lib: Reject encrypted messages with truncated nonces instead of panicking.
+
+### Changed
+
+- Update dependencies, including `async-tungstenite` 0.35, `base64` 0.23, `sha1` 0.11 (replacing `sha-1`), and stable `noise-rust-crypto` 0.6.2; retain Rust 1.92 support.
+- Replace deprecated time formatting and transfer test APIs.
+- dev: Make core library tests compile without the optional transfer and transit features, and cover this configuration in CI.
+- dev: Update GitHub Actions dependencies, fix the MSRV test matrix and cargo-deny job dependency, and check the entire workspace with strict Clippy and a locked dependency graph.
 
 ## [0.8.1] - 2026-05-07
 

@@ -53,11 +53,11 @@ pub fn hashcash(resource: String, bits: u32) -> String {
     /* This is the `[year][month][day]` format, but without activating the parser */
     use time::format_description::{Component, FormatItem};
     let format = [
-        FormatItem::Component(Component::Year(
-            time::format_description::modifier::Year::default(),
+        FormatItem::Component(Component::CalendarYearFullExtendedRange(
+            time::format_description::modifier::CalendarYearFullExtendedRange::default(),
         )),
-        FormatItem::Component(Component::Month(
-            time::format_description::modifier::Month::default(),
+        FormatItem::Component(Component::MonthNumerical(
+            time::format_description::modifier::MonthNumerical::default(),
         )),
         FormatItem::Component(Component::Day(
             time::format_description::modifier::Day::default(),
@@ -119,9 +119,11 @@ pub fn hashcash(resource: String, bits: u32) -> String {
 /// The error type returned by [`timeout`]
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 #[error("Timed out")]
+#[cfg(any(test, feature = "transit"))]
 pub(crate) struct TimeoutError;
 
 /// Utility function to call async timer implementations for WASM and others
+#[cfg(any(test, feature = "transit"))]
 pub(crate) async fn sleep(timeout: std::time::Duration) {
     #[cfg(target_family = "wasm")]
     wasmtimer::tokio::sleep(timeout).await;
@@ -132,6 +134,7 @@ pub(crate) async fn sleep(timeout: std::time::Duration) {
 /// Utility function to add a timeout to a future
 ///
 /// This behaves the same as async std timeout, but with async-io
+#[cfg(any(test, feature = "transit"))]
 pub(crate) fn timeout<'a, R, F: std::future::Future<Output = R> + 'a>(
     timeout: std::time::Duration,
     future: F,

@@ -1,6 +1,7 @@
 [workspace]
 members = [".", "cli"]
 default-members = ["cli"]
+resolver = "3"
 
 [workspace.package]
 version = "0.8.1"
@@ -23,57 +24,56 @@ async-process = "2.5.0"
 arboard = "3.6"
 async-channel = "2.5"
 async-trait = "0.1"
-base64 = "0.22.1"
+base64 = "0.23.1"
 bytecodec = "0.5"
 clap = "4"
 clap_complete = "4"
-color-eyre = "0.6.0"
+color-eyre = "0.6.5"
 console = "0.16"
 crypto_secretbox = "0.1.1"
-ctrlc = "3.2.1"
+ctrlc = "3.5.2"
 derive_more = { version = "2", default-features = false }
 dialoguer = "0.12"
 env_logger = "0.11"
-eyre = "0.6.5"
-futures = "0.3.12"
+eyre = "0.6.14"
+futures = "0.3.34"
 futures-lite = "2.6"
 futures-concurrency = "7.7.1"
-hex = "0.4.2"
+hex = "0.4.3"
 hkdf = "0.13.0"
 indicatif = "0.18"
 macro_rules_attr = "0.2"
 noise-protocol = "0.2"
-noise-rust-crypto = "0.6.0-rc.1"
+noise-rust-crypto = "0.6.2"
 unit-prefix = "0.5"
-percent-encoding = "2.1.0"
-qr2term = "0.3.0"
+percent-encoding = "2.3.2"
+qr2term = "0.3.3"
 
-# Depends on the exact version of rand_core used by crypto-common
-rand = "0.8"
-rmp-serde = "1.0.0"
-serde = "1.0.120"
-serde_derive = "1.0.120"
-serde_json = "1.0.61"
-sha-1 = "0.10.0"
+# crypto_secretbox 0.1 and spake2 0.4 use rand_core 0.6.
+rand = "0.8.8"
+rmp-serde = "1.3.1"
+serde = "1.0.229"
+serde_derive = "1.0.229"
+serde_json = "1.0.151"
+sha1 = "0.11.0"
 sha2 = "0.11.0"
 smol = "2.0"
-smol-macros = "0.1"
-async-executor = "1.13"
-async-fs = "2.0"
-async-io = "2.2.0"
+async-executor = "1.14"
+async-fs = "2.2"
+async-io = "2.6.0"
 async-net = "2.0"
 async-task = "4.7"
 spake2 = "0.4.0"
 stun_codec = "0.4.0"
-tar = "0.4.33"
+tar = "0.4.46"
 thiserror = "2"
-time = "0.3.7"
+time = "0.3.55"
 trycmd = "1.2"
-url = "2.2.2"
+url = "2.5.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 test-log = "0.2"
-zxcvbn = "3.1.0"
+zxcvbn = "3.1.1"
 wasmtimer = "0.4"
 
 [package]
@@ -102,7 +102,7 @@ serde_json = { workspace = true }
 serde_derive = { workspace = true }
 crypto_secretbox = { workspace = true }
 spake2 = { workspace = true }
-sha-1 = { workspace = true }
+sha1 = { workspace = true }
 sha2 = { workspace = true }
 hkdf = { workspace = true }
 hex = { workspace = true, features = ["serde"] }
@@ -143,10 +143,10 @@ tar = { workspace = true, optional = true }
 # rmp-serde = … # defined above
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-libc = "0.2.101"
+libc = "0.2.189"
 async-executor = { workspace = true }
 async-process = { workspace = true, optional = true }
-async-tungstenite = { version = "0.34", features = ["smol-runtime"] }
+async-tungstenite = { version = "0.35", features = ["smol-runtime"] }
 async-io = { workspace = true }
 async-net = { workspace = true }
 async-fs = { workspace = true }
@@ -159,8 +159,9 @@ if-addrs = { version = "0.15", optional = true }
 # Transfer
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-ws_stream_wasm = "0.7.3"
-getrandom = { version = "0.2.5", features = ["js"] }
+ws_stream_wasm = "0.7.5"
+# Enable browser entropy for the rand_core 0.6 crypto dependencies.
+getrandom = { version = "0.2.17", features = ["js"] }
 wasmtimer = { workspace = true }
 
 # for some tests
@@ -190,7 +191,8 @@ all = ["default", "forwarding", "fuzzy-complete"]
 
 # TLS implementations for websocket connections via async-tungstenite
 # required for optional wss connection to the mailbox server
-tls = ["async-tungstenite/async-tls"]
+# Keep the original feature name with a maintained TLS backend and bundled roots.
+tls = ["futures-rustls-webpki-roots"]
 futures-rustls-manual-roots = ["async-tungstenite/futures-rustls-manual-roots"]
 futures-rustls-native-certs = ["async-tungstenite/futures-rustls-native-certs"]
 futures-rustls-platform-verifier = ["async-tungstenite/futures-rustls-platform-verifier"]

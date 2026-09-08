@@ -28,7 +28,7 @@ rand = { workspace = true }
 smol = { workspace = true }
 
 # CLI specific dependencies
-magic-wormhole = { path = "..", version = "0.8.0-alpha.1", features = ["all"] }
+magic-wormhole = { path = "..", version = "0.8.1", features = ["all"] }
 clap = { workspace = true, features = ["cargo", "derive", "help", "env"] }
 clap_complete = { workspace = true }
 env_logger = { workspace = true }

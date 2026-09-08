@@ -5,12 +5,12 @@ use futures_concurrency::prelude::*;
 use rand::Rng;
 use std::{borrow::Cow, str::FromStr, time::Duration};
 
-#[cfg(feature = "transfer")]
-use crate::transfer;
 use crate::{
     self as magic_wormhole, AppConfig, AppID, Code, WormholeError, core::MailboxConnection,
-    transit, util::timeout,
+    util::timeout,
 };
+#[cfg(feature = "transfer")]
+use crate::{transfer, transit};
 use macro_rules_attr::apply;
 use test_log::test;
 
@@ -59,10 +59,12 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 /// # Ok(())
 /// # }
 /// ```
+#[cfg(feature = "transfer")]
 pub(crate) fn log_transit_connection(info: crate::transit::TransitInfo) {
     tracing::info!("{info}")
 }
 
+#[cfg(feature = "transfer")]
 fn default_relay_hints() -> Vec<transit::RelayHint> {
     vec![
         transit::RelayHint::from_urls(None, [transit::DEFAULT_RELAY_SERVER.parse().unwrap()])
@@ -75,8 +77,7 @@ fn default_relay_hints() -> Vec<transit::RelayHint> {
 async fn test_connect_with_unknown_code_and_allocate_passes() {
     let code = generate_random_code();
 
-    let mailbox_connection =
-        MailboxConnection::connect(transfer::APP_CONFIG.id(TEST_APPID).clone(), code, true).await;
+    let mailbox_connection = MailboxConnection::connect(APP_CONFIG, code, true).await;
 
     assert!(mailbox_connection.is_ok());
 
@@ -93,12 +94,7 @@ async fn test_connect_with_unknown_code_and_no_allocate_fails() {
     tracing::info!("hola!");
     let code = generate_random_code();
 
-    let mailbox_connection = MailboxConnection::connect(
-        transfer::APP_CONFIG.id(TEST_APPID).clone(),
-        code.clone(),
-        false,
-    )
-    .await;
+    let mailbox_connection = MailboxConnection::connect(APP_CONFIG, code.clone(), false).await;
 
     assert!(mailbox_connection.is_err());
     let error = mailbox_connection.err().unwrap();
@@ -111,6 +107,7 @@ async fn test_connect_with_unknown_code_and_no_allocate_fails() {
 }
 
 /** Generate common offers for testing, together with a pre-made answer that checks the received content */
+#[cfg(feature = "transfer")]
 async fn file_offers()
 -> eyre::Result<Vec<(transfer::offer::OfferSend, transfer::offer::OfferAccept)>> {
     async fn offer(
@@ -297,7 +294,7 @@ async fn test_file_rust2rust() {
                 panic!("v2 should be disabled for now")
             };*/
 
-            let req = transfer::request_file(
+            let req = transfer::v1::request(
                 wormhole,
                 default_relay_hints(),
                 magic_wormhole::transit::Abilities::ALL,
@@ -414,7 +411,7 @@ async fn test_send_many() {
         .unwrap();
         tracing::info!("Got key: {}", &wormhole.key);
 
-        let req = transfer::request_file(
+        let req = transfer::v1::request(
             wormhole,
             default_relay_hints(),
             magic_wormhole::transit::Abilities::ALL,

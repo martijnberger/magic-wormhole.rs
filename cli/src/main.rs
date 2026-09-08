@@ -280,12 +280,6 @@ fn main() -> eyre::Result<()> {
     smol::block_on(async_main())
 }
 
-#[cfg_attr(
-    feature = "tls",
-    deprecated(
-        note = "The 'tls' feature depends on the async-tls crate which in turn depends on an old unmaintained version of rustls. If you need websocket TLS support use one of the futures-rustls features."
-    )
-)]
 async fn async_main() -> eyre::Result<()> {
     color_eyre::install()?;
 
@@ -847,7 +841,7 @@ fn sender_print_code(
     writeln!(
         term,
         "This is equivalent to the following link: \u{001B}]8;;{}\u{001B}\\{}\u{001B}]8;;\u{001B}\\",
-        &uri, &uri
+        uri, uri
     )?;
     if no_qr {
         tracing::debug!("QR option not enabled. Skipping QR code generation.");
