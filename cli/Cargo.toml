@@ -28,7 +28,11 @@ rand = { workspace = true }
 smol = { workspace = true }
 
 # CLI specific dependencies
-magic-wormhole = { path = "..", version = "0.8.1", features = ["all"] }
+magic-wormhole = { path = "..", version = "0.8.1", default-features = false, features = [
+    "transfer",
+    "forwarding",
+    "fuzzy-complete",
+] }
 clap = { workspace = true, features = ["cargo", "derive", "help", "env"] }
 clap_complete = { workspace = true }
 env_logger = { workspace = true }
@@ -62,5 +66,5 @@ native-tls = ["magic-wormhole/native-tls"]
 experimental-transfer-v2 = ["magic-wormhole/experimental-transfer-v2"]
 experimental = ["experimental-transfer-v2"]
 
-default = ["clipboard", "magic-wormhole/default", "magic-wormhole/forwarding"]
-all = ["default", "magic-wormhole/native-tls"]
+default = ["clipboard", "tls"]
+all = ["default"]

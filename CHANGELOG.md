@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Enable rustls with bundled WebPKI roots by default for the library and CLI, including the CLI's `all` feature. Keep `native-tls` as an explicit alternative and allow opting out with `--no-default-features`.
 - Update dependencies, including `async-tungstenite` 0.35, `base64` 0.23, `sha1` 0.11 (replacing `sha-1`), and stable `noise-rust-crypto` 0.6.2; retain Rust 1.92 support.
 - Replace deprecated time formatting and transfer test APIs.
 - dev: Make core library tests compile without the optional transfer and transit features, and cover this configuration in CI.

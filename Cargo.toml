@@ -186,7 +186,7 @@ transit = [
     "dep:async-trait",
 ]
 forwarding = ["transit", "dep:rmp-serde", "dep:async-process"]
-default = ["transit", "transfer"]
+default = ["transit", "transfer", "tls"]
 all = ["default", "forwarding", "fuzzy-complete"]
 
 # TLS implementations for websocket connections via async-tungstenite

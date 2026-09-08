@@ -32,10 +32,14 @@ If you don't fear touching code and want to contribute, `./src/lib.rs`, `./src/t
 
 ### WebSocket TLS
 
-For native builds, enable the `tls` feature to connect to a mailbox server over `wss://`. It uses
-`futures-rustls` with bundled WebPKI root certificates. For system trust stores,
-use `futures-rustls-native-certs` or `futures-rustls-platform-verifier`; `native-tls`
-is also available. These features work for both the library and CLI.
+Native builds of the library and CLI enable `tls` by default, using `futures-rustls`
+with bundled WebPKI root certificates for `wss://` mailbox connections. The CLI's
+`all` feature uses the same backend. Set `default-features = false` for the library
+or pass `--no-default-features` when building the CLI to opt out.
+
+For system trust stores, select `futures-rustls-native-certs` or
+`futures-rustls-platform-verifier` instead. `native-tls` remains available as an
+explicit alternative. These features work for both the library and CLI.
 
 ## Applications using Wormhole Rust as library
 
