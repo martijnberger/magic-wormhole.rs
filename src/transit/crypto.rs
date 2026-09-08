@@ -74,7 +74,7 @@ impl TransitCryptoInitFinalizer for DynTransitCrypto {
         self: Box<Self>,
         _socket: &mut dyn TransitTransport,
     ) -> BoxFuture<'_, Result<DynTransitCrypto, TransitHandshakeError>> {
-        Box::pin(futures::future::ready(Ok(*self)))
+        Box::pin(std::future::ready(Ok(*self)))
     }
 }
 

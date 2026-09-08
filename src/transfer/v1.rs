@@ -210,8 +210,8 @@ where
         tracing::debug!("Beginning file transfer");
 
         // 11. send the file as encrypted records.
-        let file = futures::stream::once(futures::future::ready(std::io::Result::Ok(
-            Box::new(file) as Box<dyn AsyncRead + Unpin + Send>,
+        let file = futures::stream::once(std::future::ready(std::io::Result::Ok(
+            Box::new(file) as Box<dyn AsyncRead + Unpin + Send>
         )));
         let checksum = v1::send_records(&mut transit, file, file_size, progress_handler).await?;
 
@@ -228,7 +228,7 @@ where
         Ok(())
     });
 
-    futures::pin_mut!(cancel);
+    let cancel = std::pin::pin!(cancel);
     let result = cancel::cancellable_2(run, cancel).await;
     cancel::handle_run_result(wormhole, result).await
 }
@@ -262,11 +262,8 @@ pub(crate) async fn send_folder(
         tracing::debug!("Estimating the file size");
 
         // TODO try again but without pinning
-        use futures::{
-            future::{BoxFuture, ready},
-            io::Cursor,
-        };
-        use std::io::Result as IoResult;
+        use futures::{future::BoxFuture, io::Cursor};
+        use std::{future::ready, io::Result as IoResult};
 
         type WrappedDataFut = BoxFuture<'static, IoResult<Box<dyn AsyncRead + Unpin + Send>>>;
 
@@ -392,7 +389,7 @@ pub(crate) async fn send_folder(
         Ok(())
     });
 
-    futures::pin_mut!(cancel);
+    let cancel = std::pin::pin!(cancel);
     let result = cancel::cancellable_2(run, cancel).await;
     cancel::handle_run_result(wormhole, result).await
 }
@@ -459,7 +456,7 @@ pub async fn request(
         Ok((filename, filesize, connector, their_abilities, their_hints))
     });
 
-    futures::pin_mut!(cancel);
+    let cancel = std::pin::pin!(cancel);
     let result = cancel::cancellable_2(run, cancel).await;
     cancel::handle_run_result_noclose(wormhole, result)
         .await
@@ -582,7 +579,7 @@ impl ReceiveRequest {
             Ok(())
         });
 
-        futures::pin_mut!(cancel);
+        let cancel = std::pin::pin!(cancel);
         let result = cancel::cancellable_2(run, cancel).await;
         cancel::handle_run_result(self.wormhole, result).await
     }
@@ -644,7 +641,7 @@ pub(crate) async fn send_records<'a>(
 
     let mut plaintext = vec![0u8; 16 * 1024].into_boxed_slice();
     let mut sent_size = 0;
-    futures::pin_mut!(files);
+    let mut files = std::pin::pin!(files);
     while let Some(mut file) = files.next().await.transpose()? {
         loop {
             // read a block of up to 4096 bytes

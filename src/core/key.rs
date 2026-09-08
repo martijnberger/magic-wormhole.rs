@@ -5,7 +5,7 @@ use crypto_secretbox::{
     aead::{Aead, AeadCore, generic_array::GenericArray},
 };
 use hkdf::Hkdf;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, digest::FixedOutput};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 
@@ -21,7 +21,9 @@ impl KeyPurpose for WormholeKey {}
 
 /// A generic key purpose for ad-hoc subkeys or if you don't care.
 #[derive(Debug)]
+#[cfg(feature = "transit")]
 pub(crate) struct GenericKey;
+#[cfg(feature = "transit")]
 impl KeyPurpose for GenericKey {}
 
 /**
@@ -42,7 +44,7 @@ impl Key<WormholeKey> {
      *
      * The new key is derived with the `"{appid}/transit-key"` purpose.
      */
-    #[cfg(feature = "transit")]
+    #[cfg(any(feature = "transfer", feature = "forwarding"))]
     pub(crate) fn derive_transit_key(&self, appid: &AppID) -> Key<crate::transit::TransitKey> {
         let transit_purpose = format!("{appid}/transit-key");
         let derived_key = self.derive_subkey_from_purpose(&transit_purpose);
@@ -176,8 +178,7 @@ pub fn encrypt_data(key: &secretbox::Key, plaintext: &[u8]) -> (secretbox::Nonce
 pub fn decrypt_data(key: &secretbox::Key, encrypted: &[u8]) -> Option<Vec<u8>> {
     use secretbox::aead::generic_array::typenum::marker_traits::Unsigned;
     let nonce_size = <XSalsa20Poly1305 as AeadCore>::NonceSize::to_usize();
-    let (nonce, ciphertext) = encrypted.split_at(nonce_size);
-    assert_eq!(nonce.len(), nonce_size);
+    let (nonce, ciphertext) = encrypted.split_at_checked(nonce_size)?;
     let cipher = XSalsa20Poly1305::new(GenericArray::from_slice(key));
     cipher
         .decrypt(GenericArray::from_slice(nonce), ciphertext)
@@ -354,6 +355,36 @@ mod test {
                 panic!("failed to decrypt");
             },
         };
+    }
+
+    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn test_decrypt_data_rejects_truncated_messages() {
+        let key = secretbox::Key::default();
+        let (_, encrypted) = encrypt_data(&key, b"hello world");
+
+        // Cover missing nonce bytes, missing authentication tag bytes, and
+        // truncated ciphertext. None of these untrusted inputs may panic.
+        for len in 0..encrypted.len() {
+            assert_eq!(decrypt_data(&key, &encrypted[..len]), None, "length {len}");
+        }
+        assert_eq!(
+            decrypt_data(&key, &encrypted).as_deref(),
+            Some(&b"hello world"[..])
+        );
+    }
+
+    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn test_decrypt_data_rejects_tampered_messages() {
+        let key = secretbox::Key::default();
+        let (_, encrypted) = encrypt_data(&key, b"hello world");
+
+        for index in 0..encrypted.len() {
+            let mut tampered = encrypted.clone();
+            tampered[index] ^= 1;
+            assert_eq!(decrypt_data(&key, &tampered), None, "byte {index}");
+        }
     }
 
     /* This test is disabled for now because the used key length is not compatible with our API */

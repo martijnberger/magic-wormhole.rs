@@ -17,8 +17,8 @@ use crate::transit::TransitRole;
 
 use super::*;
 use async_net::TcpListener;
-use futures::{AsyncReadExt, AsyncWriteExt, Future, SinkExt, StreamExt, TryStreamExt};
-use serde_derive::{Deserialize, Serialize};
+use futures::{AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt, TryStreamExt};
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
@@ -142,7 +142,7 @@ impl ForwardingError {
 ///
 /// The port forwarding will run until an error occurs, the peer terminates the connection
 /// or `cancel` resolves. The last one can be used to provide timeouts or to inject CTRL-C
-/// handling. If you want the forward to never (successfully) stop, pass [`futures::future::pending()`]
+/// handling. If you want the forward to never (successfully) stop, pass [`std::future::pending()`]
 /// as the value.
 pub async fn serve(
     mut wormhole: Wormhole,
@@ -245,9 +245,9 @@ pub async fn serve(
     let transit_rx = transit_rx.fuse();
     use futures::future::FutureExt;
     let cancel = cancel.fuse();
-    futures::pin_mut!(transit_tx);
-    futures::pin_mut!(transit_rx);
-    futures::pin_mut!(cancel);
+    let mut transit_tx = std::pin::pin!(transit_tx);
+    let mut transit_rx = std::pin::pin!(transit_rx);
+    let mut cancel = std::pin::pin!(cancel);
 
     /* Main processing loop. Catch errors */
     let result = ForwardingServe {
@@ -296,7 +296,6 @@ struct ForwardingServe {
     backchannel_rx: futures::channel::mpsc::Receiver<(u64, Option<Vec<u8>>)>,
 }
 
-//futures::pin_mut!(backchannel_rx);
 impl ForwardingServe {
     async fn forward(
         &mut self,
@@ -677,16 +676,16 @@ impl ConnectOffer {
     ///
     /// The method will run until an error occurs, the peer terminates the connection
     /// or `cancel` resolves. The last one can be used to provide timeouts or to inject CTRL-C
-    /// handling. If you want the forward to never (successfully) stop, pass [`futures::future::pending()`]
+    /// handling. If you want the forward to never (successfully) stop, pass [`std::future::pending()`]
     /// as the value.
     pub async fn accept(self, cancel: impl Future<Output = ()>) -> Result<(), ForwardingError> {
         let (transit_tx, transit_rx) = self.transit.split();
         let transit_rx = transit_rx.fuse();
         use futures::FutureExt;
         let cancel = cancel.fuse();
-        futures::pin_mut!(transit_tx);
-        futures::pin_mut!(transit_rx);
-        futures::pin_mut!(cancel);
+        let mut transit_tx = std::pin::pin!(transit_tx);
+        let mut transit_rx = std::pin::pin!(transit_rx);
+        let mut cancel = std::pin::pin!(cancel);
 
         /* Error handling catcher (see below) */
         let run = async {

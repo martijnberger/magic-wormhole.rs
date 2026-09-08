@@ -305,9 +305,12 @@ mod test {
 
         assert_eq!(list.get_completions("22"), Vec::<String>::new());
         assert_eq!(list.get_completions("22-"), Vec::<String>::new());
-        assert_ne!(
-            list.get_completions("22-troj").first().unwrap(),
-            &"22-trojan".to_string()
+        // "trojan" belongs to the other word list. Without fuzzy completion,
+        // there are no matches for this prefix.
+        assert!(
+            !list
+                .get_completions("22-troj")
+                .contains(&"22-trojan".into())
         );
 
         assert_eq!(

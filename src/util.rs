@@ -14,21 +14,7 @@ macro_rules! bail {
     }};
 }
 
-/**
- * Native reimplementation of [`sodiumoxide::utils::increment_le](https://docs.rs/sodiumoxide/0.2.6/sodiumoxide/utils/fn.increment_le.html).
- * TODO remove after https://github.com/quininer/memsec/issues/11 is resolved.
- * Original implementation: https://github.com/jedisct1/libsodium/blob/6d566070b48efd2fa099bbe9822914455150aba9/src/libsodium/sodium/utils.c#L262-L307
- */
-#[expect(unused)]
-pub fn sodium_increment_le(n: &mut [u8]) {
-    let mut c = 1u16;
-    for b in n {
-        c += *b as u16;
-        *b = c as u8;
-        c >>= 8;
-    }
-}
-
+#[cfg(feature = "transit")]
 pub fn sodium_increment_be(n: &mut [u8]) {
     let mut c = 1u16;
     for b in n.iter_mut().rev() {
@@ -40,7 +26,6 @@ pub fn sodium_increment_be(n: &mut [u8]) {
 
 /** Mint a new hashcash token with a given difficulty and resource string. */
 pub fn hashcash(resource: String, bits: u32) -> String {
-    use rand::{Rng, distributions::Standard};
     use sha1::{Digest, Sha1};
 
     if bits > 32 {
@@ -53,11 +38,11 @@ pub fn hashcash(resource: String, bits: u32) -> String {
     /* This is the `[year][month][day]` format, but without activating the parser */
     use time::format_description::{Component, FormatItem};
     let format = [
-        FormatItem::Component(Component::Year(
-            time::format_description::modifier::Year::default(),
+        FormatItem::Component(Component::CalendarYearFullExtendedRange(
+            time::format_description::modifier::CalendarYearFullExtendedRange::default(),
         )),
-        FormatItem::Component(Component::Month(
-            time::format_description::modifier::Month::default(),
+        FormatItem::Component(Component::MonthNumerical(
+            time::format_description::modifier::MonthNumerical::default(),
         )),
         FormatItem::Component(Component::Day(
             time::format_description::modifier::Day::default(),
@@ -74,19 +59,14 @@ pub fn hashcash(resource: String, bits: u32) -> String {
             .unwrap(),
     );
 
-    let rand: String = base64_engine.encode(
-        rand::thread_rng()
-            .sample_iter(&Standard)
-            .take(16)
-            .collect::<Vec<u8>>(),
-    );
+    let rand = base64_engine.encode(rand::random::<[u8; 16]>());
 
     /* 64 bit counter should suffice */
-    let mut counter = [0; 8];
+    let mut counter = 0u64;
     let mut hasher = Sha1::new();
 
     loop {
-        sodium_increment_be(&mut counter);
+        counter = counter.wrapping_add(1);
 
         let stamp = format!(
             "1:{}:{}:{}::{}:{}",
@@ -94,7 +74,7 @@ pub fn hashcash(resource: String, bits: u32) -> String {
             date,
             resource,
             rand,
-            base64_engine.encode(counter)
+            base64_engine.encode(counter.to_be_bytes())
         );
 
         hasher.update(&stamp);
@@ -119,9 +99,11 @@ pub fn hashcash(resource: String, bits: u32) -> String {
 /// The error type returned by [`timeout`]
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 #[error("Timed out")]
+#[cfg(any(test, feature = "transit"))]
 pub(crate) struct TimeoutError;
 
 /// Utility function to call async timer implementations for WASM and others
+#[cfg(any(test, feature = "transit"))]
 pub(crate) async fn sleep(timeout: std::time::Duration) {
     #[cfg(target_family = "wasm")]
     wasmtimer::tokio::sleep(timeout).await;
@@ -132,6 +114,7 @@ pub(crate) async fn sleep(timeout: std::time::Duration) {
 /// Utility function to add a timeout to a future
 ///
 /// This behaves the same as async std timeout, but with async-io
+#[cfg(any(test, feature = "transit"))]
 pub(crate) fn timeout<'a, R, F: std::future::Future<Output = R> + 'a>(
     timeout: std::time::Duration,
     future: F,
@@ -157,9 +140,7 @@ fn executor() -> &'static async_executor::Executor<'static> {
                     .spawn(|| {
                         loop {
                             std::panic::catch_unwind(|| {
-                                async_io::block_on(
-                                    executor().run(futures_lite::future::pending::<()>()),
-                                )
+                                async_io::block_on(executor().run(std::future::pending::<()>()))
                             })
                             .ok();
                         }
@@ -179,4 +160,30 @@ pub(crate) fn spawn<T: Send + 'static>(
     future: impl Future<Output = T> + Send + 'static,
 ) -> async_task::Task<T> {
     executor().spawn(future)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha1::{Digest, Sha1};
+
+    #[test]
+    fn hashcash_preserves_token_format_and_proof_of_work() {
+        let token = hashcash("wormhole-test".into(), 8);
+        let fields: Vec<_> = token.split(':').collect();
+        assert_eq!(fields.len(), 7);
+        assert_eq!(fields[0], "1");
+        assert_eq!(fields[1], "8");
+        assert_eq!(fields[3], "wormhole-test");
+        assert_eq!(fields[4], "");
+
+        let base64 = base64::engine::general_purpose::STANDARD;
+        let date = base64.decode(fields[2]).unwrap();
+        assert_eq!(date.len(), 8);
+        assert!(date.iter().all(u8::is_ascii_digit));
+        assert_eq!(base64.decode(fields[5]).unwrap().len(), 16);
+        let counter: [u8; 8] = base64.decode(fields[6]).unwrap().try_into().unwrap();
+        assert!(u64::from_be_bytes(counter) > 0);
+        assert_eq!(Sha1::digest(token.as_bytes())[0], 0);
+    }
 }

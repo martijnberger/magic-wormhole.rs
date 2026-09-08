@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 #[cfg(not(target_family = "wasm"))]
 use std::path::{Path, PathBuf};
 
-use futures::{AsyncRead, AsyncSeek, AsyncWrite, Future};
-use serde_derive::{Deserialize, Serialize};
+use futures::{AsyncRead, AsyncSeek, AsyncWrite};
+use serde::{Deserialize, Serialize};
 
 pub type OfferSend = Offer<OfferContent>;
 

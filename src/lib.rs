@@ -21,7 +21,10 @@
 
 #![forbid(unfulfilled_lint_expectations)]
 #![deny(unsafe_code)]
-#![expect(clippy::too_many_arguments)]
+#![cfg_attr(
+    any(feature = "transfer", feature = "forwarding"),
+    expect(clippy::too_many_arguments)
+)]
 #![allow(unused_macros)]
 #![warn(missing_docs)]
 

@@ -1,5 +1,5 @@
 use super::{AppID, Mailbox, Mood, MySide, Nameplate, Phase, TheirSide};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Special encoding for the `nameplates` message

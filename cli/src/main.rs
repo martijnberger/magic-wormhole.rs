@@ -10,13 +10,10 @@ use std::{
 };
 
 use clap::{Args, CommandFactory, Parser, Subcommand};
-use color_eyre::{
-    eyre::{self, Context},
-    owo_colors::OwoColorize,
-};
 use completer::enter_code;
 use console::{Term, style};
-use futures::{Future, future::Either};
+use eyre::WrapErr;
+use futures::future::Either;
 use indicatif::{MultiProgress, ProgressBar};
 use magic_wormhole::{
     MailboxConnection, ParseCodeError, ParsePasswordError, Wormhole, forwarding, transfer,
@@ -280,15 +277,7 @@ fn main() -> eyre::Result<()> {
     smol::block_on(async_main())
 }
 
-#[cfg_attr(
-    feature = "tls",
-    deprecated(
-        note = "The 'tls' feature depends on the async-tls crate which in turn depends on an old unmaintained version of rustls. If you need websocket TLS support use one of the futures-rustls features."
-    )
-)]
 async fn async_main() -> eyre::Result<()> {
-    color_eyre::install()?;
-
     let app = WormholeCli::parse();
 
     let mut term = Term::stdout();
@@ -455,9 +444,9 @@ async fn async_main() -> eyre::Result<()> {
                         match target.rsplit_once(':') {
                             Some((host, port)) => {
                                 let host = url::Host::parse(host)
-                                    .map_err(eyre::Error::from)
-                                    .context("Invalid host")?;
-                                let port: u16 = port.parse().context("Invalid port")?;
+                                    .map_err(eyre::Report::from)
+                                    .wrap_err("Invalid host")?;
+                                let port: u16 = port.parse().wrap_err("Invalid port")?;
                                 Ok((Some(host), port))
                             },
                             None => {
@@ -465,12 +454,12 @@ async fn async_main() -> eyre::Result<()> {
                                 target
                                     .parse::<u16>()
                                     .map(|port| (None, port))
-                                    .map_err(eyre::Error::from)
-                                    .context("Invalid port")
+                                    .map_err(eyre::Report::from)
+                                    .wrap_err("Invalid port")
                             },
                         }
                     })();
-                    result.context(format!(
+                    result.wrap_err(format!(
                         "Invalid {}{} target argument ('{}') ",
                         index + 1,
                         match (index + 1) % 10 {
@@ -751,14 +740,14 @@ async fn make_send_offer(
             let file_name = file
                 .file_name()
                 .ok_or_else(|| {
-                    eyre::format_err!("You can't send a file without a name. Maybe try --rename")
+                    eyre::eyre!("You can't send a file without a name. Maybe try --rename")
                 })?
                 .to_str()
-                .ok_or_else(|| eyre::format_err!("File path must be a valid UTF-8 string"))?
+                .ok_or_else(|| eyre::eyre!("File path must be a valid UTF-8 string"))?
                 .to_owned();
             Ok(transfer::offer::OfferSend::new_file_or_folder(file_name, file).await?)
         },
-        (_, Some(_)) => Err(eyre::format_err!(
+        (_, Some(_)) => Err(eyre::eyre!(
             "Can't customize file name when sending multiple files"
         )),
         (_, None) => {
@@ -847,13 +836,13 @@ fn sender_print_code(
     writeln!(
         term,
         "This is equivalent to the following link: \u{001B}]8;;{}\u{001B}\\{}\u{001B}]8;;\u{001B}\\",
-        &uri, &uri
+        uri, uri
     )?;
     if no_qr {
         tracing::debug!("QR option not enabled. Skipping QR code generation.");
     } else {
         let qr_code = qr2term::generate_qr_string(&uri)
-            .context("Failed to generate QR code for send link")?;
+            .wrap_err("Failed to generate QR code for send link")?;
         writeln!(term, "{qr_code}")?;
     }
 
@@ -918,7 +907,7 @@ async fn send(
         ctrlc_handler(),
     )
     .await
-    .context("Send process failed")?;
+    .wrap_err("Send process failed")?;
     pb2.finish();
     Ok(())
 }
@@ -1043,7 +1032,7 @@ async fn receive(
     {
         let req = transfer::request_file(wormhole, relay_hints, transit_abilities, ctrlc_handler())
             .await
-            .context("Could not get an offer")?;
+            .wrap_err("Could not get an offer")?;
         /* If None, the task got cancelled */
         if let Some(req) = req {
             receive_inner_v1(req, target_dir, noconfirm).await
@@ -1055,7 +1044,7 @@ async fn receive(
     {
         let req = transfer::request(wormhole, relay_hints, transit_abilities, ctrlc_handler())
             .await
-            .context("Could not get an offer")?;
+            .wrap_err("Could not get an offer")?;
 
         match req {
             Some(transfer::ReceiveRequest::V1(req)) => {
@@ -1091,12 +1080,12 @@ async fn receive_inner_v1(
             match should_use_color() {
                 true => format!(
                     "Receive file '{}' ({})?",
-                    req.file_name().green().bold(),
-                    match NumberPrefix::binary(req.file_size() as f64) {
+                    style(req.file_name()).green().bold(),
+                    style(match NumberPrefix::binary(req.file_size() as f64) {
                         NumberPrefix::Standalone(bytes) => format!("{bytes} bytes"),
                         NumberPrefix::Prefixed(prefix, n) =>
                             format!("{:.1} {}B", n, prefix.symbol()),
-                    }
+                    })
                     .blue()
                     .bold(),
                 ),
@@ -1114,7 +1103,7 @@ async fn receive_inner_v1(
         )
         .await)
     {
-        return req.reject().await.context("Could not reject offer");
+        return req.reject().await.wrap_err("Could not reject offer");
     }
 
     // TODO validate untrusted input here
@@ -1129,7 +1118,7 @@ async fn receive_inner_v1(
             .create_new(true)
             .open(&file_path)
             .await
-            .context("Failed to create destination file")?;
+            .wrap_err("Failed to create destination file")?;
         return req
             .accept(
                 &transit_handler,
@@ -1138,7 +1127,7 @@ async fn receive_inner_v1(
                 ctrlc_handler(),
             )
             .await
-            .context("Receive process failed");
+            .wrap_err("Receive process failed");
     }
 
     /* If there is a collision, ask whether to overwrite */
@@ -1146,7 +1135,7 @@ async fn receive_inner_v1(
         if should_use_color() {
             format!(
                 "Override existing file {}?",
-                file_path.display().red().bold()
+                style(file_path.display()).red().bold()
             )
         } else {
             format!("Override existing file {}?", file_path.display())
@@ -1155,7 +1144,7 @@ async fn receive_inner_v1(
     )
     .await
     {
-        return req.reject().await.context("Could not reject offer");
+        return req.reject().await.wrap_err("Could not reject offer");
     }
 
     let mut file = OpenOptions::new()
@@ -1171,7 +1160,7 @@ async fn receive_inner_v1(
         ctrlc_handler(),
     )
     .await
-    .context("Receive process failed")
+    .wrap_err("Receive process failed")
 }
 
 #[cfg(feature = "experimental-transfer-v2")]
@@ -1200,7 +1189,7 @@ async fn receive_inner_v2(
         )
         .await)
     {
-        return req.reject().await.context("Could not reject offer");
+        return req.reject().await.wrap_err("Could not reject offer");
     }
 
     let pb = create_progress_bar(file_size);
@@ -1217,7 +1206,7 @@ async fn receive_inner_v2(
     ));
     smol::fs::create_dir_all(&tmp_dir)
         .await
-        .context("Failed to create temporary directory for receiving")?;
+        .wrap_err("Failed to create temporary directory for receiving")?;
 
     /* Prepare the receive by creating all directories */
     offer.create_directories(&tmp_dir).await?;
@@ -1226,7 +1215,7 @@ async fn receive_inner_v2(
     let answer = offer.accept_all(&tmp_dir);
     req.accept(&transit_handler, answer, on_progress, ctrlc_handler())
         .await
-        .context("Receive process failed")?;
+        .wrap_err("Receive process failed")?;
 
     // /* Put in all the symlinks last, this greatly reduces the attack surface */
     // offer.create_symlinks(&tmp_dir).await?;
@@ -1263,7 +1252,7 @@ async fn receive_inner_v2(
     .await?;
 
     /* Delete the temporary directory */
-    smol::fs::remove_dir_all(&tmp_dir).await.context(format!(
+    smol::fs::remove_dir_all(&tmp_dir).await.wrap_err(format!(
         "Failed to delete {}, please do it manually",
         tmp_dir.display()
     ))?;
@@ -1277,13 +1266,18 @@ fn transit_handler(info: TransitInfo) {
     let use_color = should_use_color();
 
     let conn_type = if use_color {
-        info.conn_type.bright_magenta().bold().to_string()
+        style(&info.conn_type)
+            .for_stderr()
+            .magenta()
+            .bright()
+            .bold()
+            .to_string()
     } else {
         info.conn_type.to_string()
     };
 
     let peer_addr = if use_color {
-        info.peer_addr.cyan().bold().to_string()
+        style(info.peer_addr).for_stderr().cyan().bold().to_string()
     } else {
         info.peer_addr.to_string()
     };

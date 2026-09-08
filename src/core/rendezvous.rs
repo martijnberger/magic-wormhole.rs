@@ -394,10 +394,7 @@ impl RendezvousServer {
             Some(PermissionRequired { none: true, .. }) => (),
             Some(PermissionRequired { other, .. }) => {
                 /* We can't actually log in :/ */
-                return Err(RendezvousError::Login(
-                    // TODO use `into_keys` once stable and remove the `cloned`
-                    other.keys().cloned().collect(),
-                ));
+                return Err(RendezvousError::Login(other.into_keys().collect()));
             },
             None => (),
         }

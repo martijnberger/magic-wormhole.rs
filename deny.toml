@@ -25,6 +25,25 @@ allow = [
 ignore = false
 registries = []
 
+# Existing Windows clipboard dependencies, reached through arboard.
+# https://spdx.org/licenses/BSL-1.0.html
+[[licenses.exceptions]]
+name = "clipboard-win"
+version = "=5.4.1"
+allow = ["BSL-1.0"]
+
+[[licenses.exceptions]]
+name = "error-code"
+version = "=3.4.0"
+allow = ["BSL-1.0"]
+
+# Existing Wayland clipboard dependency, reached through wl-clipboard-rs.
+# https://spdx.org/licenses/Zlib.html
+[[licenses.exceptions]]
+name = "foldhash"
+version = "=0.1.5"
+allow = ["Zlib"]
+
 [[licenses.clarify]]
 name = "ring"
 version = "*"

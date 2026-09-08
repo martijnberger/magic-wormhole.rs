@@ -1,18 +1,20 @@
 #![allow(irrefutable_let_patterns)]
 
 use super::{Mood, Phase};
-use futures_concurrency::prelude::*;
 use rand::Rng;
 use std::{borrow::Cow, str::FromStr, time::Duration};
 
-#[cfg(feature = "transfer")]
-use crate::transfer;
 use crate::{
     self as magic_wormhole, AppConfig, AppID, Code, WormholeError, core::MailboxConnection,
-    transit, util::timeout,
+    util::timeout,
 };
+#[cfg(feature = "transfer")]
+use crate::{transfer, transit};
 use macro_rules_attr::apply;
 use test_log::test;
+
+#[cfg(feature = "transfer")]
+type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 macro_rules! test {
     (
@@ -59,10 +61,12 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 /// # Ok(())
 /// # }
 /// ```
+#[cfg(feature = "transfer")]
 pub(crate) fn log_transit_connection(info: crate::transit::TransitInfo) {
     tracing::info!("{info}")
 }
 
+#[cfg(feature = "transfer")]
 fn default_relay_hints() -> Vec<transit::RelayHint> {
     vec![
         transit::RelayHint::from_urls(None, [transit::DEFAULT_RELAY_SERVER.parse().unwrap()])
@@ -75,8 +79,7 @@ fn default_relay_hints() -> Vec<transit::RelayHint> {
 async fn test_connect_with_unknown_code_and_allocate_passes() {
     let code = generate_random_code();
 
-    let mailbox_connection =
-        MailboxConnection::connect(transfer::APP_CONFIG.id(TEST_APPID).clone(), code, true).await;
+    let mailbox_connection = MailboxConnection::connect(APP_CONFIG, code, true).await;
 
     assert!(mailbox_connection.is_ok());
 
@@ -93,12 +96,7 @@ async fn test_connect_with_unknown_code_and_no_allocate_fails() {
     tracing::info!("hola!");
     let code = generate_random_code();
 
-    let mailbox_connection = MailboxConnection::connect(
-        transfer::APP_CONFIG.id(TEST_APPID).clone(),
-        code.clone(),
-        false,
-    )
-    .await;
+    let mailbox_connection = MailboxConnection::connect(APP_CONFIG, code.clone(), false).await;
 
     assert!(mailbox_connection.is_err());
     let error = mailbox_connection.err().unwrap();
@@ -111,11 +109,12 @@ async fn test_connect_with_unknown_code_and_no_allocate_fails() {
 }
 
 /** Generate common offers for testing, together with a pre-made answer that checks the received content */
-async fn file_offers()
--> eyre::Result<Vec<(transfer::offer::OfferSend, transfer::offer::OfferAccept)>> {
+#[cfg(feature = "transfer")]
+async fn file_offers() -> TestResult<Vec<(transfer::offer::OfferSend, transfer::offer::OfferAccept)>>
+{
     async fn offer(
         name: &str,
-    ) -> eyre::Result<(transfer::offer::OfferSend, transfer::offer::OfferAccept)> {
+    ) -> TestResult<(transfer::offer::OfferSend, transfer::offer::OfferAccept)> {
         #[cfg(target_family = "wasm")]
         let (data, offer) = {
             let data = match name {
@@ -260,7 +259,7 @@ async fn test_file_rust2rust() {
             tracing::info!("This wormhole's code is: {}", &mailbox_connection.code);
             code_tx.send(mailbox_connection.code.clone()).unwrap();
             let wormhole = crate::Wormhole::connect(mailbox_connection).await?;
-            eyre::Result::<_>::Ok(
+            TestResult::<_>::Ok(
                 transfer::send(
                     wormhole,
                     default_relay_hints(),
@@ -268,7 +267,7 @@ async fn test_file_rust2rust() {
                     offer,
                     &log_transit_connection,
                     |_sent, _total| {},
-                    futures::future::pending(),
+                    std::future::pending(),
                 )
                 .await?,
             )
@@ -290,18 +289,18 @@ async fn test_file_rust2rust() {
                 wormhole,
                 default_relay_hints(),
                 magic_wormhole::transit::Abilities::ALL,
-                futures::future::pending(),
+                std::future::pending(),
             )
             .await?
             .unwrap() else {
                 panic!("v2 should be disabled for now")
             };*/
 
-            let req = transfer::request_file(
+            let req = transfer::v1::request(
                 wormhole,
                 default_relay_hints(),
                 magic_wormhole::transit::Abilities::ALL,
-                futures::future::pending(),
+                std::future::pending(),
             )
             .await?
             .unwrap();
@@ -310,13 +309,13 @@ async fn test_file_rust2rust() {
                 &log_transit_connection,
                 |_received, _total| {},
                 &mut answer,
-                futures::future::pending(),
+                std::future::pending(),
             )
             .await?;
-            eyre::Result::<_>::Ok(())
+            TestResult::<_>::Ok(())
         };
 
-        let outputs = (sender_task, receiver_task).join().await;
+        let outputs = futures::future::join(sender_task, receiver_task).await;
 
         assert!(outputs.0.is_ok());
         assert!(outputs.1.is_ok());
@@ -336,26 +335,25 @@ async fn test_send_many() {
     let code = mailbox.code.clone();
     tracing::info!("The code is {:?}", code);
 
-    async fn gen_offer() -> eyre::Result<transfer::offer::OfferSend> {
+    async fn gen_offer() -> TestResult<transfer::offer::OfferSend> {
         file_offers().await.map(|mut vec| vec.remove(0).0)
     }
 
-    async fn gen_accept() -> eyre::Result<transfer::offer::OfferAccept> {
+    async fn gen_accept() -> TestResult<transfer::offer::OfferAccept> {
         file_offers().await.map(|mut vec| vec.remove(0).1)
     }
 
     /* Send many */
     let sender_code = code.clone();
     let senders = crate::util::spawn(async move {
-        // let mut senders = Vec::<async_task::Task<std::result::Result<std::vec::Vec<u8>, eyre::Error>>>::new();
-        let mut senders: Vec<async_task::Task<eyre::Result<()>>> = Vec::new();
+        let mut senders: Vec<async_task::Task<TestResult<()>>> = Vec::new();
 
         /* The first time, we reuse the current session for sending */
         {
             tracing::info!("Sending file #{}", 0);
             let wormhole = crate::Wormhole::connect(mailbox).await?;
             senders.push(crate::util::spawn(async move {
-                eyre::Result::Ok(
+                TestResult::Ok(
                     crate::transfer::send(
                         wormhole,
                         default_relay_hints(),
@@ -363,7 +361,7 @@ async fn test_send_many() {
                         gen_offer().await?,
                         &log_transit_connection,
                         |_, _| {},
-                        futures::future::pending(),
+                        std::future::pending(),
                     )
                     .await?,
                 )
@@ -382,7 +380,7 @@ async fn test_send_many() {
             )
             .await?;
             senders.push(crate::util::spawn(async move {
-                eyre::Result::Ok(
+                TestResult::Ok(
                     crate::transfer::send(
                         wormhole,
                         default_relay_hints(),
@@ -390,13 +388,13 @@ async fn test_send_many() {
                         gen_offer().await?,
                         &log_transit_connection,
                         |_, _| {},
-                        futures::future::pending(),
+                        std::future::pending(),
                     )
                     .await?,
                 )
             }));
         }
-        eyre::Result::<_>::Ok(senders)
+        TestResult::<_>::Ok(senders)
     });
 
     // Sleep one second
@@ -414,11 +412,11 @@ async fn test_send_many() {
         .unwrap();
         tracing::info!("Got key: {}", &wormhole.key);
 
-        let req = transfer::request_file(
+        let req = transfer::v1::request(
             wormhole,
             default_relay_hints(),
             magic_wormhole::transit::Abilities::ALL,
-            futures::future::pending(),
+            std::future::pending(),
         )
         .await
         .unwrap()
@@ -440,7 +438,7 @@ async fn test_send_many() {
             &log_transit_connection,
             |_, _| {},
             &mut answer,
-            futures::future::pending(),
+            std::future::pending(),
         )
         .await
         .unwrap();
@@ -490,7 +488,7 @@ async fn test_wrong_code() {
         assert!(result.is_err());
     });
 
-    timeout(TIMEOUT, (sender_task, receiver_task).join())
+    timeout(TIMEOUT, futures::future::join(sender_task, receiver_task))
         .await
         .unwrap();
 }

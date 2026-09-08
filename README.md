@@ -26,9 +26,20 @@ New features that exceed the other implementations:
 
 If you want to toy with the CLI, `cargo run -- --help` will get you started. The code sits in `./cli/src`. For more instructions see [cli/README.md](cli/README.md).
 
-If you'd like to use Wormhole in your application, `cargo doc --open` will tell you how to use it. There aren't any hosted docs at the moment.
+If you'd like to use Wormhole in your application, see the [library documentation](https://docs.rs/magic-wormhole/) or run `cargo doc -p magic-wormhole --open`.
 
 If you don't fear touching code and want to contribute, `./src/lib.rs`, `./src/transfer.rs` and `./src/transit.rs` are rather easy to get into. The [protocol specification](https://github.com/magic-wormhole/magic-wormhole-protocols) will probably be useful to you.
+
+### WebSocket TLS
+
+Native builds of the library and CLI enable `tls` by default, using `futures-rustls`
+with bundled WebPKI root certificates for `wss://` mailbox connections. The CLI's
+`all` feature uses the same backend. Set `default-features = false` for the library
+or pass `--no-default-features` when building the CLI to opt out.
+
+For system trust stores, select `futures-rustls-native-certs` or
+`futures-rustls-platform-verifier` instead. `native-tls` remains available as an
+explicit alternative. These features work for both the library and CLI.
 
 ## Applications using Wormhole Rust as library
 
