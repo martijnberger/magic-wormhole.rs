@@ -19,7 +19,7 @@ impl Completion for CustomCompletion {
     }
 }
 
-pub fn enter_code() -> anyhow::Result<String> {
+pub fn enter_code() -> eyre::Result<String> {
     let custom_completion = CustomCompletion::default();
 
     Input::new()

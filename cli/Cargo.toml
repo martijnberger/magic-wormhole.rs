@@ -27,7 +27,8 @@ rand = { workspace = true }
 smol = { workspace = true }
 
 # CLI specific dependencies
-anyhow = "1.0.104"
+# Keep error reports focused on context chains rather than internal source locations.
+eyre = { version = "0.6.14", default-features = false, features = ["auto-install"] }
 magic-wormhole = { path = "..", version = "0.8.1", default-features = false, features = [
     "transfer",
     "forwarding",

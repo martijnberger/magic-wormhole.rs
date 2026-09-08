@@ -9,10 +9,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use completer::enter_code;
 use console::{Term, style};
+use eyre::WrapErr;
 use futures::future::Either;
 use indicatif::{MultiProgress, ProgressBar};
 use magic_wormhole::{
@@ -273,11 +273,11 @@ struct WormholeCli {
     no_color: bool,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> eyre::Result<()> {
     smol::block_on(async_main())
 }
 
-async fn async_main() -> anyhow::Result<()> {
+async fn async_main() -> eyre::Result<()> {
     let app = WormholeCli::parse();
 
     let mut term = Term::stdout();
@@ -444,9 +444,9 @@ async fn async_main() -> anyhow::Result<()> {
                         match target.rsplit_once(':') {
                             Some((host, port)) => {
                                 let host = url::Host::parse(host)
-                                    .map_err(anyhow::Error::from)
-                                    .context("Invalid host")?;
-                                let port: u16 = port.parse().context("Invalid port")?;
+                                    .map_err(eyre::Report::from)
+                                    .wrap_err("Invalid host")?;
+                                let port: u16 = port.parse().wrap_err("Invalid port")?;
                                 Ok((Some(host), port))
                             },
                             None => {
@@ -454,12 +454,12 @@ async fn async_main() -> anyhow::Result<()> {
                                 target
                                     .parse::<u16>()
                                     .map(|port| (None, port))
-                                    .map_err(anyhow::Error::from)
-                                    .context("Invalid port")
+                                    .map_err(eyre::Report::from)
+                                    .wrap_err("Invalid port")
                             },
                         }
                     })();
-                    result.context(format!(
+                    result.wrap_err(format!(
                         "Invalid {}{} target argument ('{}') ",
                         index + 1,
                         match (index + 1) % 10 {
@@ -583,7 +583,7 @@ fn parse_transit_args(args: &CommonArgs) -> transit::Abilities {
 }
 
 type PrintCodeFn =
-    dyn Fn(&mut Term, &magic_wormhole::Code, &Option<url::Url>, bool) -> anyhow::Result<()>;
+    dyn Fn(&mut Term, &magic_wormhole::Code, &Option<url::Url>, bool) -> eyre::Result<()>;
 
 /**
  * Parse the necessary command line arguments to establish an initial server connection.
@@ -601,7 +601,7 @@ async fn parse_and_connect(
     is_send: bool,
     mut app_config: magic_wormhole::AppConfig<impl serde::Serialize + Send + Sync + 'static>,
     print_code: Option<&PrintCodeFn>,
-) -> anyhow::Result<(Wormhole, magic_wormhole::Code, Vec<transit::RelayHint>)> {
+) -> eyre::Result<(Wormhole, magic_wormhole::Code, Vec<transit::RelayHint>)> {
     // TODO handle relay servers with multiple endpoints better
     let mut relay_hints: Vec<transit::RelayHint> = common_args
         .relay_server
@@ -712,16 +712,16 @@ async fn parse_and_connect(
     print_welcome(term, mailbox_connection.welcome())?;
     let code = mailbox_connection.code().clone();
     let wormhole = Wormhole::connect(mailbox_connection).await?;
-    anyhow::Result::<_>::Ok((wormhole, code, relay_hints))
+    eyre::Result::<_>::Ok((wormhole, code, relay_hints))
 }
 
 async fn make_send_offer(
     mut files: Vec<PathBuf>,
     file_name: Option<String>,
-) -> anyhow::Result<transfer::offer::OfferSend> {
+) -> eyre::Result<transfer::offer::OfferSend> {
     for file in &files {
         let path = std::path::PathBuf::from(file);
-        anyhow::ensure!(
+        eyre::ensure!(
             smol::unblock(move || path.exists()).await,
             "{} does not exist",
             file.display()
@@ -740,26 +740,26 @@ async fn make_send_offer(
             let file_name = file
                 .file_name()
                 .ok_or_else(|| {
-                    anyhow::format_err!("You can't send a file without a name. Maybe try --rename")
+                    eyre::eyre!("You can't send a file without a name. Maybe try --rename")
                 })?
                 .to_str()
-                .ok_or_else(|| anyhow::format_err!("File path must be a valid UTF-8 string"))?
+                .ok_or_else(|| eyre::eyre!("File path must be a valid UTF-8 string"))?
                 .to_owned();
             Ok(transfer::offer::OfferSend::new_file_or_folder(file_name, file).await?)
         },
-        (_, Some(_)) => Err(anyhow::format_err!(
+        (_, Some(_)) => Err(eyre::eyre!(
             "Can't customize file name when sending multiple files"
         )),
         (_, None) => {
             let mut names = std::collections::BTreeMap::new();
             for path in &files {
-                anyhow::ensure!(
+                eyre::ensure!(
                     path.file_name().is_some(),
                     "'{}' has no name. You need to send it separately and use the --rename flag, or rename it on the file system",
                     path.display()
                 );
                 if let Some(old) = names.insert(path.file_name(), path) {
-                    anyhow::bail!(
+                    eyre::bail!(
                         "'{}' and '{}' have the same file name. Rename one of them on disk, or send them in separate transfers",
                         old.display(),
                         path.display(),
@@ -802,7 +802,7 @@ fn create_progress_handler(pb: ProgressBar) -> impl FnMut(u64, u64) {
     }
 }
 
-fn print_welcome(term: &mut Term, welcome: Option<&str>) -> anyhow::Result<()> {
+fn print_welcome(term: &mut Term, welcome: Option<&str>) -> eyre::Result<()> {
     if let Some(welcome) = &welcome {
         writeln!(term, "Got welcome from server: {welcome}")?;
     }
@@ -815,7 +815,7 @@ fn sender_print_code(
     code: &magic_wormhole::Code,
     rendezvous_server: &Option<url::Url>,
     no_qr: bool,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     let uri = magic_wormhole::uri::WormholeTransferUri {
         code: code.clone(),
         rendezvous_server: rendezvous_server.clone(),
@@ -842,7 +842,7 @@ fn sender_print_code(
         tracing::debug!("QR option not enabled. Skipping QR code generation.");
     } else {
         let qr_code = qr2term::generate_qr_string(&uri)
-            .context("Failed to generate QR code for send link")?;
+            .wrap_err("Failed to generate QR code for send link")?;
         writeln!(term, "{qr_code}")?;
     }
 
@@ -865,7 +865,7 @@ fn server_print_code(
     code: &magic_wormhole::Code,
     _: &Option<url::Url>,
     _qr: bool,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     if cfg!(feature = "clipboard") {
         writeln!(
             term,
@@ -894,7 +894,7 @@ async fn send(
     relay_hints: Vec<transit::RelayHint>,
     offer: transfer::offer::OfferSend,
     transit_abilities: transit::Abilities,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     let pb = create_progress_bar(0);
     let pb2 = pb.clone();
     transfer::send(
@@ -907,7 +907,7 @@ async fn send(
         ctrlc_handler(),
     )
     .await
-    .context("Send process failed")?;
+    .wrap_err("Send process failed")?;
     pb2.finish();
     Ok(())
 }
@@ -922,7 +922,7 @@ async fn send_many(
     wormhole: Wormhole,
     term: &mut Term,
     transit_abilities: transit::Abilities,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     tracing::warn!(
         "Reminder that you are sending the file to multiple people, and this may reduce the overall security. See the help page for more information."
     );
@@ -984,7 +984,7 @@ async fn send_many(
         mp: &MultiProgress,
         transit_abilities: transit::Abilities,
         cancel: impl Future<Output = ()> + Send + 'static,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<()> {
         writeln!(&mut term, "Sending file to peer").unwrap();
         let pb = create_progress_bar(0);
         let pb = mp.add(pb);
@@ -1001,7 +1001,7 @@ async fn send_many(
                     cancel,
                 )
                 .await?;
-                anyhow::Result::<_>::Ok(())
+                eyre::Result::<_>::Ok(())
             };
             match result.await {
                 Ok(_) => {
@@ -1027,12 +1027,12 @@ async fn receive(
     target_dir: &std::path::Path,
     noconfirm: bool,
     transit_abilities: transit::Abilities,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     #[cfg(not(feature = "experimental-transfer-v2"))]
     {
         let req = transfer::request_file(wormhole, relay_hints, transit_abilities, ctrlc_handler())
             .await
-            .context("Could not get an offer")?;
+            .wrap_err("Could not get an offer")?;
         /* If None, the task got cancelled */
         if let Some(req) = req {
             receive_inner_v1(req, target_dir, noconfirm).await
@@ -1044,7 +1044,7 @@ async fn receive(
     {
         let req = transfer::request(wormhole, relay_hints, transit_abilities, ctrlc_handler())
             .await
-            .context("Could not get an offer")?;
+            .wrap_err("Could not get an offer")?;
 
         match req {
             Some(transfer::ReceiveRequest::V1(req)) => {
@@ -1063,7 +1063,7 @@ async fn receive_inner_v1(
     req: transfer::ReceiveRequestV1,
     target_dir: &std::path::Path,
     noconfirm: bool,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     use smol::fs::OpenOptions;
 
     /*
@@ -1103,7 +1103,7 @@ async fn receive_inner_v1(
         )
         .await)
     {
-        return req.reject().await.context("Could not reject offer");
+        return req.reject().await.wrap_err("Could not reject offer");
     }
 
     // TODO validate untrusted input here
@@ -1118,7 +1118,7 @@ async fn receive_inner_v1(
             .create_new(true)
             .open(&file_path)
             .await
-            .context("Failed to create destination file")?;
+            .wrap_err("Failed to create destination file")?;
         return req
             .accept(
                 &transit_handler,
@@ -1127,7 +1127,7 @@ async fn receive_inner_v1(
                 ctrlc_handler(),
             )
             .await
-            .context("Receive process failed");
+            .wrap_err("Receive process failed");
     }
 
     /* If there is a collision, ask whether to overwrite */
@@ -1144,7 +1144,7 @@ async fn receive_inner_v1(
     )
     .await
     {
-        return req.reject().await.context("Could not reject offer");
+        return req.reject().await.wrap_err("Could not reject offer");
     }
 
     let mut file = OpenOptions::new()
@@ -1160,7 +1160,7 @@ async fn receive_inner_v1(
         ctrlc_handler(),
     )
     .await
-    .context("Receive process failed")
+    .wrap_err("Receive process failed")
 }
 
 #[cfg(feature = "experimental-transfer-v2")]
@@ -1168,7 +1168,7 @@ async fn receive_inner_v2(
     req: transfer::ReceiveRequestV2,
     target_dir: &std::path::Path,
     noconfirm: bool,
-) -> anyhow::Result<()> {
+) -> eyre::Result<()> {
     let offer = req.offer();
     let file_size = offer.total_size();
     let offer_name = offer.offer_name();
@@ -1189,7 +1189,7 @@ async fn receive_inner_v2(
         )
         .await)
     {
-        return req.reject().await.context("Could not reject offer");
+        return req.reject().await.wrap_err("Could not reject offer");
     }
 
     let pb = create_progress_bar(file_size);
@@ -1206,7 +1206,7 @@ async fn receive_inner_v2(
     ));
     smol::fs::create_dir_all(&tmp_dir)
         .await
-        .context("Failed to create temporary directory for receiving")?;
+        .wrap_err("Failed to create temporary directory for receiving")?;
 
     /* Prepare the receive by creating all directories */
     offer.create_directories(&tmp_dir).await?;
@@ -1215,7 +1215,7 @@ async fn receive_inner_v2(
     let answer = offer.accept_all(&tmp_dir);
     req.accept(&transit_handler, answer, on_progress, ctrlc_handler())
         .await
-        .context("Receive process failed")?;
+        .wrap_err("Receive process failed")?;
 
     // /* Put in all the symlinks last, this greatly reduces the attack surface */
     // offer.create_symlinks(&tmp_dir).await?;
@@ -1238,7 +1238,7 @@ async fn receive_inner_v2(
             let path = std::path::PathBuf::from(&target_path);
             let dest = path.clone();
             if smol::unblock(move || dest.exists()).await {
-                anyhow::bail!(
+                eyre::bail!(
                     "Target destination {} exists, you can manually extract the file from {}",
                     target_path.display(),
                     tmp_dir.display(),
@@ -1252,7 +1252,7 @@ async fn receive_inner_v2(
     .await?;
 
     /* Delete the temporary directory */
-    smol::fs::remove_dir_all(&tmp_dir).await.context(format!(
+    smol::fs::remove_dir_all(&tmp_dir).await.wrap_err(format!(
         "Failed to delete {}, please do it manually",
         tmp_dir.display()
     ))?;

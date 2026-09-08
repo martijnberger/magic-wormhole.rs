@@ -10,7 +10,8 @@ and protocol compatibility, as well as the direct dependency count.
   `thiserror` for derives. Do not add `anyhow` or `eyre` to the library, its tests,
   or its examples. Tests and examples can use `Box<dyn std::error::Error>` when
   they need to propagate several error types.
-- `anyhow` is confined to the CLI for application-level context and reporting.
+- Prefer `eyre` over `anyhow` for application-level context and reporting in the
+  CLI. Keep both out of library code, tests, and examples.
 - The default TLS backend is rustls with bundled WebPKI roots. Platform trust
   stores and `native-tls` remain explicit feature choices. This configures TLS
   for `wss` connections; it does not change the rendezvous server URL.
@@ -24,7 +25,7 @@ Applied reductions:
 | Previous dependency or helper | Replacement |
 | --- | --- |
 | `eyre` in library tests and examples | Standard boxed errors; public library error enums stay typed |
-| CLI `color-eyre` and its color helpers | CLI-only `anyhow` and the existing `console` dependency |
+| CLI `color-eyre` and its color helpers | CLI-only `eyre` and the existing `console` dependency |
 | Unused CLI `env_logger` | Removed; CLI already uses `tracing-subscriber` |
 | `test-log` default logging features | Tracing and color features only |
 | `futures-concurrency`, used by two library tests | `futures::future::join` from the existing dependency |
@@ -36,7 +37,7 @@ Applied reductions:
 | Handwritten byte-array counter for hashcash | `u64::wrapping_add` and `u64::to_be_bytes`; preserve the wire encoding |
 | Random salt collected through a temporary vector | `rand::random::<[u8; 16]>()` |
 
-This simplification reduces `Cargo.lock` from 462 to 441 package entries.
+This simplification reduces `Cargo.lock` from 462 to 442 package entries.
 Removing a direct dependency does not necessarily remove its transitive uses:
 Serde still needs `serde_derive`, and optional `test-log` dependencies can remain
 in the lockfile even when they are absent from the active build graph.

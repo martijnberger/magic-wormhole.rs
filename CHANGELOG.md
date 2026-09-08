@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replace deprecated time formatting and transfer test APIs.
 - lib: Use standard-library pinning, future, result, and map helpers; simplify hashcash counter and salt generation while preserving its format.
 - lib: Remove `futures-concurrency` and test-only `eyre`; use standard boxed errors in examples and tests while retaining typed public errors.
-- cli: Replace `color-eyre` with `anyhow` and the existing `console` color helpers. Errors use concise reports with context chains.
+- cli: Replace `color-eyre` with CLI-only `eyre` and the existing `console` color helpers. Errors use concise reports with context chains.
 - dev: Remove unused CLI logging dependencies, use tracing-only test logging, and import derive macros through Serde.
 - dev: Make core documentation examples compile without optional transfer features and remove obsolete entropy feature guards.
 - dev: Include the CLI in cargo-deny checks and record version-scoped license exceptions for its existing Windows and Wayland clipboard dependencies.
