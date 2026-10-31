@@ -10,17 +10,20 @@ This is a Rust port of the Python version at <https://github.com/magic-wormhole/
 
 Features that are missing:
 
-- Text message sending
-- Folder sending (we can send folders, but it will send a tar ball which the other side will have to manually unpack)
+- Text message sending and receiving
+- Native folder transfer (sent folders become `.tar` files; received Python folders become `.zip` files, both requiring manual extraction)
 - Tor support
+- Automatic mailbox reconnection and Python's experimental Dilation API
 
-New features that exceed the other implementations:
+Additional features compared with Python's `wormhole` CLI:
 
-- Can do direct connections across the internet (NATs) and firewalls
+- STUN-assisted direct connections across some NATs and firewalls (not guaranteed for every network)
 - Automatically copies your code to the clipboard
 - Port forwarding in addition to file transfer (experimental)
 - Send a file to multiple people (experimental)
 - Fuzzy wormhole code completion
+
+See [PYTHON_PARITY.md](PYTHON_PARITY.md) for the pinned comparison, exercised interoperability scenarios, and suggested parity work.
 
 ## Getting started
 

@@ -1066,6 +1066,9 @@ async fn receive_inner_v1(
 ) -> eyre::Result<()> {
     use smol::fs::OpenOptions;
 
+    // The transfer layer rejects peer-supplied paths before returning a request.
+    let file_path = target_dir.join(req.file_name());
+
     /*
      * Control flow is a bit tricky here:
      * - First of all, we ask if we want to receive the file at all
@@ -1105,9 +1108,6 @@ async fn receive_inner_v1(
     {
         return req.reject().await.wrap_err("Could not reject offer");
     }
-
-    // TODO validate untrusted input here
-    let file_path = std::path::Path::new(target_dir).join(req.file_name());
 
     let pb = create_progress_bar(req.file_size());
 
@@ -1212,7 +1212,7 @@ async fn receive_inner_v2(
     offer.create_directories(&tmp_dir).await?;
 
     /* Accept the offer and receive it */
-    let answer = offer.accept_all(&tmp_dir);
+    let answer = offer.accept_all(&tmp_dir)?;
     req.accept(&transit_handler, answer, on_progress, ctrlc_handler())
         .await
         .wrap_err("Receive process failed")?;

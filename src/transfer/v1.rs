@@ -453,6 +453,8 @@ pub async fn request(
                 },
             };
 
+        validate_file_name(&filename)?;
+
         Ok((filename, filesize, connector, their_abilities, their_hints))
     });
 
@@ -606,7 +608,7 @@ impl ReceiveRequest {
 
     /// The name of the offered file.
     ///
-    /// This is untrusted and unverified input.
+    /// Validated to be a single filename, but otherwise untrusted peer input.
     pub fn file_name(&self) -> String {
         self.file_name.clone()
     }

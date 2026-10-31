@@ -15,10 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - lib: Route the existing `tls` feature through `futures-rustls` with bundled WebPKI roots, removing the old `async-tls` dependency chain affected by [RUSTSEC-2026-0098](https://rustsec.org/advisories/RUSTSEC-2026-0098), [RUSTSEC-2026-0099](https://rustsec.org/advisories/RUSTSEC-2026-0099), and [RUSTSEC-2026-0104](https://rustsec.org/advisories/RUSTSEC-2026-0104).
 - lib: Reject encrypted messages with truncated nonces instead of panicking.
+- lib/cli: Reject peer-supplied paths in classic file and directory offers before exposing a receive request. Validate every component of filesystem acceptance offers before preparing writers or creating directories, including experimental transfer-v2 consumers.
 
 ### Changed
 
 - Enable rustls with bundled WebPKI roots by default for the library and CLI, including the CLI's `all` feature. Keep `native-tls` as an explicit alternative and allow opting out with `--no-default-features`.
+- lib: `transfer::offer::Offer::accept_all` now returns `std::io::Result<OfferAccept>` so unsafe offer names can be rejected before filesystem access. Callers must handle the result; the CLI has been migrated.
 - Update dependencies, including `async-tungstenite` 0.35, `base64` 0.23, `sha1` 0.11 (replacing `sha-1`), and stable `noise-rust-crypto` 0.6.2; retain Rust 1.92 support.
 - Replace deprecated time formatting and transfer test APIs.
 - lib: Use standard-library pinning, future, result, and map helpers; simplify hashcash counter and salt generation while preserving its format.

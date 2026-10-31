@@ -13,6 +13,33 @@ pub struct Offer<T = ()> {
     pub(super) content: BTreeMap<String, OfferEntry<T>>,
 }
 
+/// Validate a peer-provided name before using it as one filesystem component.
+pub(super) fn validate_file_name(file_name: &str) -> std::io::Result<()> {
+    let name = std::path::Path::new(file_name);
+    let valid =
+        !file_name.contains(['/', '\\', '\0']) && name.file_name() == Some(name.as_os_str());
+    #[cfg(windows)]
+    let valid = valid && !file_name.contains(':') && !file_name.ends_with(['.', ' ']);
+    if !valid {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Peer offered an unsafe file name: {file_name:?}"),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn validate_content<T>(content: &BTreeMap<String, OfferEntry<T>>) -> std::io::Result<()> {
+    for (name, entry) in content {
+        validate_file_name(name)?;
+        if let OfferEntry::Directory { content } = entry {
+            validate_content(content)?;
+        }
+    }
+    Ok(())
+}
+
 impl OfferSend {
     /// Offer a single path (file or folder)
     #[cfg(not(target_family = "wasm"))]
@@ -106,9 +133,14 @@ impl<T> Offer<T> {
         self.iter_files().map(|v| v.2).sum()
     }
 
+    /// Prepare filesystem writers, rejecting unsafe names anywhere in the offer.
+    ///
+    /// The destination directory must be trusted: name validation does not
+    /// prevent traversal through pre-existing or concurrently replaced symlinks.
     #[cfg(not(target_family = "wasm"))]
-    pub fn accept_all(&self, target_dir: &Path) -> OfferAccept {
-        self.set_content(|path| {
+    pub fn accept_all(&self, target_dir: &Path) -> std::io::Result<OfferAccept> {
+        validate_content(&self.content)?;
+        Ok(self.set_content(|path| {
             let full_path: PathBuf = target_dir.join(path.join("/"));
             let content = new_accept_content(move |append| {
                 let full_path = full_path.clone();
@@ -124,11 +156,15 @@ impl<T> Offer<T> {
                 offset: 0,
                 sha256: None,
             }
-        })
+        }))
     }
 
+    /// Validate the complete offer before creating any of its directories.
+    ///
+    /// As with [`Self::accept_all`], the destination must be trusted.
     #[cfg(not(target_family = "wasm"))]
     pub async fn create_directories(&self, target_path: &Path) -> std::io::Result<()> {
+        validate_content(&self.content)?;
         // TODO this could be made more efficient by passing around just one buffer
         for (name, file) in &self.content {
             file.create_directories(&target_path.join(name)).await?;
@@ -514,4 +550,161 @@ pub struct AcceptInner {
     pub offset: u64,
     pub sha256: Option<[u8; 32]>,
     pub content: AcceptContent,
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use super::*;
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("wormhole-receive-{:032x}", rand::random::<u128>()));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_file_name_components() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "../escaped.bin",
+            "/tmp/escaped.bin",
+            "nested/file.bin",
+            "file.bin/",
+            "nul\0name",
+            r"..\escaped.bin",
+            r"C:\escaped.bin",
+            r"\\server\share\escaped.bin",
+        ] {
+            assert_eq!(
+                validate_file_name(name).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidInput,
+                "{name:?}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_windows_drive_stream_and_normalized_names() {
+        for name in ["C:escaped.bin", "file:stream", ".. ", "file.", "file "] {
+            assert_eq!(
+                validate_file_name(name).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidInput,
+                "{name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_offers_before_preparing_writers() {
+        let temp = TestDirectory::new();
+        let file = OfferEntry::RegularFile {
+            size: 4,
+            content: (),
+        };
+        let offers = [
+            Offer {
+                content: BTreeMap::from([("../escaped.bin".into(), file.clone())]),
+            },
+            Offer {
+                content: BTreeMap::from([(
+                    "safe".into(),
+                    OfferEntry::Directory {
+                        content: BTreeMap::from([("../../escaped.bin".into(), file)]),
+                    },
+                )]),
+            },
+            Offer {
+                content: BTreeMap::from([(
+                    "/escaped".into(),
+                    OfferEntry::Directory {
+                        content: BTreeMap::new(),
+                    },
+                )]),
+            },
+        ];
+        for offer in offers {
+            let err = match offer.accept_all(&temp.0) {
+                Ok(_) => panic!("unsafe offer accepted"),
+                Err(err) => err,
+            };
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        }
+        assert_eq!(std::fs::read_dir(&temp.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn rejects_nested_traversal_before_creating_directories() {
+        futures_lite::future::block_on(async {
+            let temp = TestDirectory::new();
+            let target = temp.0.join("downloads");
+            std::fs::create_dir(&target).unwrap();
+            let offer: Offer = serde_json::from_value(serde_json::json!({
+                "content": {
+                    "safe": {
+                        "type": "directory",
+                        "content": {
+                            "../../escaped": {"type": "directory", "content": {}}
+                        }
+                    }
+                }
+            }))
+            .unwrap();
+
+            let err = offer.create_directories(&target).await.unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+            assert!(!target.join("safe").exists());
+            assert!(!temp.0.join("escaped").exists());
+        });
+    }
+
+    #[test]
+    fn accepts_nested_files_and_empty_directories() {
+        use futures::AsyncWriteExt;
+
+        futures_lite::future::block_on(async {
+            let temp = TestDirectory::new();
+            let offer: Offer = serde_json::from_value(serde_json::json!({
+                "content": {
+                    "empty": {"type": "directory", "content": {}},
+                    "folder": {
+                        "type": "directory",
+                        "content": {
+                            ".hidden": {"type": "regular-file", "size": 7},
+                            "résumé with spaces.txt": {"type": "regular-file", "size": 7}
+                        }
+                    }
+                }
+            }))
+            .unwrap();
+
+            offer.create_directories(&temp.0).await.unwrap();
+            let answer = offer.accept_all(&temp.0).unwrap();
+            for (_path, inner, _size) in answer.into_iter_files() {
+                let mut file = (inner.content)(false).await.unwrap();
+                file.write_all(b"payload").await.unwrap();
+                file.close().await.unwrap();
+            }
+            assert!(temp.0.join("empty").is_dir());
+            for name in [".hidden", "résumé with spaces.txt"] {
+                assert_eq!(
+                    std::fs::read(temp.0.join("folder").join(name)).unwrap(),
+                    b"payload"
+                );
+            }
+        });
+    }
 }
