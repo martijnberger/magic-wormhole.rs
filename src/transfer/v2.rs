@@ -105,6 +105,7 @@ async fn make_transit(
     relay_hints: Vec<transit::RelayHint>,
     transit_abilities: transit::Abilities,
     peer_abilities: transit::Abilities,
+    their_hints: Option<transit::Hints>,
 ) -> Result<(transit::Transit, transit::TransitInfo), TransferError> {
     let connector = transit::init(transit_abilities, Some(peer_abilities), relay_hints).await?;
 
@@ -114,8 +115,9 @@ async fn make_transit(
         .await?;
 
     /* Receive their transit hints */
-    let their_hints: transit::Hints =
-        match wormhole.receive_json::<PeerMessage>().await??.check_err()? {
+    let their_hints = match their_hints {
+        Some(hints) => hints,
+        None => match wormhole.receive_json::<PeerMessage>().await??.check_err()? {
             PeerMessage::TransitV2(transit) => {
                 tracing::debug!("received transit message: {:?}", transit);
                 transit.hints_v2
@@ -127,7 +129,8 @@ async fn make_transit(
                     .await;
                 bail!(error)
             },
-        };
+        },
+    };
 
     /* Get a transit connection */
     let (transit, info) = match connector
@@ -174,6 +177,7 @@ pub async fn send(
                 relay_hints,
                 transit_abilities,
                 peer_abilities.transit_abilities,
+                None,
             )
             .await?
             .0)
@@ -330,26 +334,34 @@ async fn send_inner(
     Ok(())
 }
 
-pub async fn request(
+pub(super) async fn request_with_transit(
     mut wormhole: Wormhole,
     relay_hints: Vec<transit::RelayHint>,
-    peer_version: AppVersion,
     transit_abilities: transit::Abilities,
+    their_transit: TransitV2,
     cancel: impl Future<Output = ()>,
 ) -> Result<Option<ReceiveRequest>, TransferError> {
-    let peer_abilities = peer_version.transfer_v2.unwrap();
     let cancel = std::pin::pin!(cancel);
 
     /* Establish transit connection, close the Wormhole and switch to using the transit connection (msgpack instead of json) */
     let ((mut transit, info), wormhole, cancel) = cancel::with_cancel_wormhole!(
         wormhole,
         run = async {
+            let peer_version: AppVersion = serde_json::from_value(wormhole.peer_version().clone())?;
+            ensure!(
+                peer_version.supports_v2(),
+                TransferError::Protocol("Peer did not advertise transfer-v2".into())
+            );
+            let peer_abilities = peer_version.transfer_v2.ok_or_else(|| {
+                TransferError::Protocol("Peer omitted transfer-v2 abilities".into())
+            })?;
             make_transit(
                 &mut wormhole,
                 TransitRole::Follower,
                 relay_hints,
                 transit_abilities,
                 peer_abilities.transit_abilities,
+                Some(their_transit.hints_v2),
             )
             .await
         },

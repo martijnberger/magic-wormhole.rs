@@ -1,12 +1,12 @@
-//! Client-to-Client protocol to organize file transfers
+//! Client-to-client protocol for text and file transfers.
 //!
-//! This gives you the actual capability to transfer files, that feature that Magic Wormhole got known and loved for.
+//! Send text with [`send_text`] and receive either kind of offer with [`request_offer`].
 //!
 //! It is bound to an [`AppID`]. Only applications using that APPID (and thus this protocol) can interoperate with
 //! the original Python implementation (and other compliant implementations).
 //!
-//! At its core, "peer messages" are exchanged over an established wormhole connection with the other side.
-//! They are used to set up a [transit] portal and to exchange a file offer/accept. Then, the file is transmitted over the transit relay.
+//! Text offers and acknowledgements use only the encrypted wormhole connection.
+//! File offers additionally negotiate a [transit] connection for the file contents.
 
 use futures::{AsyncRead, AsyncWrite};
 use serde::{Deserialize, Serialize};
@@ -267,7 +267,6 @@ pub(crate) enum PeerMessage {
 }
 
 impl PeerMessage {
-    #[allow(dead_code)]
     fn offer_message_v1(msg: impl Into<String>) -> Self {
         PeerMessage::Offer(v1::OfferMessage::Message(msg.into()))
     }
@@ -296,7 +295,6 @@ impl PeerMessage {
         })
     }
 
-    #[allow(dead_code)]
     fn message_ack_v1(msg: impl Into<String>) -> Self {
         PeerMessage::Answer(v1::AnswerMessage::MessageAck(msg.into()))
     }
@@ -321,10 +319,10 @@ impl PeerMessage {
         PeerMessage::TransitV2(v2::TransitV2 { hints_v2 })
     }
 
-    fn check_err(&self) -> Result<Self, TransferError> {
+    fn check_err(self) -> Result<Self, TransferError> {
         match self {
-            Self::Error(err) => Err(TransferError::PeerError(err.clone())),
-            other => Ok(other.clone()),
+            Self::Error(err) => Err(TransferError::PeerError(err)),
+            other => Ok(other),
         }
     }
 
@@ -332,6 +330,140 @@ impl PeerMessage {
     fn ser_json(&self) -> Vec<u8> {
         serde_json::to_vec(self).unwrap()
     }
+}
+
+/// Send a text message over the encrypted wormhole, without opening a transit connection.
+///
+/// Completes when the receiver acknowledges the message. Cancellation uses the same
+/// best-effort peer notification and connection cleanup as file transfers.
+pub async fn send_text(
+    mut wormhole: Wormhole,
+    message: impl Into<String>,
+    cancel: impl Future<Output = ()>,
+) -> Result<(), TransferError> {
+    let message = message.into();
+    let run = Box::pin(async {
+        wormhole
+            .send_json(&PeerMessage::offer_message_v1(message))
+            .await?;
+        loop {
+            match wormhole.receive_json::<PeerMessage>().await??.check_err()? {
+                // Python receivers may send transit hints before learning the offer type.
+                PeerMessage::Transit(_) => {},
+                PeerMessage::Answer(answer) => {
+                    answer.check_message_ack()?;
+                    return Ok(());
+                },
+                other => {
+                    return Err(TransferError::unexpected_message(
+                        "answer/message_ack",
+                        other,
+                    ));
+                },
+            }
+        }
+    });
+    let cancel = std::pin::pin!(cancel);
+    let result = cancel::cancellable_2(run, cancel).await;
+    cancel::handle_run_result(wormhole, result).await
+}
+
+/// A pending text or file offer.
+///
+/// Inspect the offer and then accept or reject its request.
+#[must_use]
+pub enum ReceiveOffer {
+    /// A classic text message, not yet acknowledged.
+    Text(ReceiveTextRequest),
+    /// A file offer using the negotiated transfer protocol.
+    File(ReceiveRequest),
+}
+
+/// A text message awaiting the application's acceptance or rejection.
+#[must_use]
+pub struct ReceiveTextRequest {
+    wormhole: Wormhole,
+    message: String,
+}
+
+impl ReceiveTextRequest {
+    /// The untrusted text offered by the peer, without any trimming or escaping.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Acknowledge successful delivery of this message and close the wormhole.
+    ///
+    /// Applications should finish displaying or storing the message before accepting.
+    pub async fn accept(mut self, cancel: impl Future<Output = ()>) -> Result<(), TransferError> {
+        let run = Box::pin(async {
+            self.wormhole
+                .send_json(&PeerMessage::message_ack_v1("ok"))
+                .await?;
+            Ok(())
+        });
+        let cancel = std::pin::pin!(cancel);
+        let result = cancel::cancellable_2(run, cancel).await;
+        cancel::handle_run_result(self.wormhole, result).await
+    }
+
+    /// Notify the peer that the message was rejected, then close the wormhole.
+    pub async fn reject(mut self) -> Result<(), TransferError> {
+        let result = self
+            .wormhole
+            .send_json(&PeerMessage::error_message("transfer rejected"))
+            .await;
+        let close_result = self.wormhole.close().await;
+        result?;
+        close_result?;
+        Ok(())
+    }
+}
+
+/// Wait for a text or file offer without acknowledging it.
+///
+/// Text offers use only the encrypted mailbox; transit is initialized only for
+/// file offers. Returns `None` if cancelled.
+pub async fn request_offer(
+    mut wormhole: Wormhole,
+    relay_hints: Vec<transit::RelayHint>,
+    transit_abilities: transit::Abilities,
+    cancel: impl Future<Output = ()>,
+) -> Result<Option<ReceiveOffer>, TransferError> {
+    let run = Box::pin(async { wormhole.receive_json::<PeerMessage>().await??.check_err() });
+    let cancel = std::pin::pin!(cancel);
+    let result = cancel::cancellable_2(run, cancel).await;
+    let Some((first_message, wormhole, cancel)) =
+        cancel::handle_run_result_noclose(wormhole, result).await?
+    else {
+        return Ok(None);
+    };
+
+    #[cfg(feature = "experimental-transfer-v2")]
+    if let PeerMessage::TransitV2(transit) = first_message {
+        return v2::request_with_transit(wormhole, relay_hints, transit_abilities, transit, cancel)
+            .await
+            .map(|request| request.map(|request| ReceiveOffer::File(ReceiveRequest::V2(request))));
+    }
+
+    v1::request_offer(
+        wormhole,
+        relay_hints,
+        transit_abilities,
+        Some(first_message),
+        cancel,
+    )
+    .await
+    .map(|request| {
+        request.map(|request| match request {
+            v1::ReceiveOffer::Text(request) => ReceiveOffer::Text(request),
+            v1::ReceiveOffer::File(request) => {
+                #[cfg(feature = "experimental-transfer-v2")]
+                let request = ReceiveRequest::V1(request);
+                ReceiveOffer::File(request)
+            },
+        })
+    })
 }
 
 /// Send a previously constructed offer.
@@ -397,24 +529,13 @@ pub async fn request(
     transit_abilities: transit::Abilities,
     cancel: impl Future<Output = ()>,
 ) -> Result<Option<ReceiveRequest>, TransferError> {
-    #[cfg(feature = "experimental-transfer-v2")]
-    {
-        let peer_version: AppVersion = serde_json::from_value(wormhole.peer_version().clone())?;
-        if peer_version.supports_v2() {
-            v2::request(
-                wormhole,
-                relay_hints,
-                peer_version,
-                transit_abilities,
-                cancel,
-            )
-            .await
-            .map(|req| req.map(ReceiveRequest::V2))
-        } else {
-            v1::request(wormhole, relay_hints, transit_abilities, cancel)
-                .await
-                .map(|req| req.map(ReceiveRequest::V1))
-        }
+    match request_offer(wormhole, relay_hints, transit_abilities, cancel).await? {
+        Some(ReceiveOffer::File(request)) => Ok(Some(request)),
+        Some(ReceiveOffer::Text(request)) => {
+            let _ = request.reject().await;
+            Err(TransferError::UnsupportedOffer)
+        },
+        None => Ok(None),
     }
 }
 

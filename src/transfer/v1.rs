@@ -34,6 +34,19 @@ pub enum AnswerMessage {
     FileAck(String),
 }
 
+impl AnswerMessage {
+    pub(super) fn check_message_ack(self) -> Result<(), TransferError> {
+        match self {
+            Self::MessageAck(message) if message == "ok" => Ok(()),
+            Self::MessageAck(_) => Err(TransferError::AckError),
+            other => Err(TransferError::unexpected_message(
+                "answer/message_ack",
+                PeerMessage::Answer(other),
+            )),
+        }
+    }
+}
+
 /**
  * A set of hints for both sides to find each other
  */
@@ -188,11 +201,8 @@ where
                 PeerMessage::Answer(AnswerMessage::FileAck(msg)) => {
                     ensure!(msg == "ok", TransferError::AckError);
                 },
-                _ => {
-                    bail!(TransferError::unexpected_message(
-                        "answer/file_ack",
-                        fileack_msg
-                    ));
+                other => {
+                    bail!(TransferError::unexpected_message("answer/file_ack", other));
                 },
             }
         }
@@ -403,17 +413,80 @@ pub(crate) async fn send_folder(
  * Returns `None` if the task got cancelled.
  */
 pub async fn request(
-    mut wormhole: Wormhole,
+    wormhole: Wormhole,
     relay_hints: Vec<transit::RelayHint>,
     transit_abilities: transit::Abilities,
     cancel: impl Future<Output = ()>,
 ) -> Result<Option<ReceiveRequest>, TransferError> {
-    // Error handling
-    let run = Box::pin(async {
-        let connector = transit::init(transit_abilities, None, relay_hints).await?;
+    match request_offer(wormhole, relay_hints, transit_abilities, None, cancel).await? {
+        Some(ReceiveOffer::File(request)) => Ok(Some(request)),
+        Some(ReceiveOffer::Text(request)) => {
+            let _ = request.reject().await;
+            Err(TransferError::UnsupportedOffer)
+        },
+        None => Ok(None),
+    }
+}
 
-        // send the transit message
-        tracing::debug!("Sending transit message '{:?}", connector.our_hints());
+pub(super) enum ReceiveOffer {
+    Text(super::ReceiveTextRequest),
+    File(ReceiveRequest),
+}
+
+pub(super) async fn request_offer(
+    mut wormhole: Wormhole,
+    relay_hints: Vec<transit::RelayHint>,
+    transit_abilities: transit::Abilities,
+    mut first_message: Option<PeerMessage>,
+    cancel: impl Future<Output = ()>,
+) -> Result<Option<ReceiveOffer>, TransferError> {
+    #[expect(
+        clippy::large_enum_variant,
+        reason = "File negotiation metadata stays on the stack until the request is constructed"
+    )]
+    enum PendingOffer {
+        Text(String),
+        File {
+            filename: String,
+            filesize: u64,
+            connector: TransitConnector,
+            transit: TransitV1,
+        },
+    }
+
+    let run = Box::pin(async {
+        let mut their_transit = None;
+        let offer = loop {
+            let message = match first_message.take() {
+                Some(message) => message,
+                None => wormhole.receive_json::<PeerMessage>().await??,
+            };
+            match message.check_err()? {
+                PeerMessage::Transit(transit) if their_transit.is_none() => {
+                    their_transit = Some(transit);
+                },
+                PeerMessage::Offer(offer) => break offer,
+                other => bail!(TransferError::unexpected_message("offer or transit", other)),
+            }
+        };
+
+        let (filename, filesize) = match offer {
+            OfferMessage::Message(message) => return Ok(PendingOffer::Text(message)),
+            OfferMessage::File { filename, filesize } => (filename, filesize),
+            OfferMessage::Directory {
+                mut dirname,
+                zipsize,
+                ..
+            } => {
+                dirname.push_str(".zip");
+                (dirname, zipsize)
+            },
+            OfferMessage::Unknown => bail!(TransferError::UnsupportedOffer),
+        };
+        validate_file_name(&filename)?;
+
+        // Only file offers need transit, even if the sender sent hints eagerly.
+        let connector = transit::init(transit_abilities, None, relay_hints).await?;
         wormhole
             .send_json(&PeerMessage::transit_v1(
                 *connector.our_abilities(),
@@ -421,60 +494,44 @@ pub async fn request(
             ))
             .await?;
 
-        // receive transit message
-        let (their_abilities, their_hints): (transit::Abilities, transit::Hints) =
-            match wormhole.receive_json::<PeerMessage>().await??.check_err()? {
-                PeerMessage::Transit(transit) => {
-                    tracing::debug!("received transit message: {:?}", transit);
-                    (transit.abilities_v1, transit.hints_v1)
-                },
-                other => {
-                    bail!(TransferError::unexpected_message("transit", other));
-                },
-            };
-
-        // 3. receive file offer message from peer
-        let (filename, filesize) =
-            match wormhole.receive_json::<PeerMessage>().await??.check_err()? {
-                PeerMessage::Offer(offer_type) => match offer_type {
-                    v1::OfferMessage::File { filename, filesize } => (filename, filesize),
-                    v1::OfferMessage::Directory {
-                        mut dirname,
-                        zipsize,
-                        ..
-                    } => {
-                        dirname.push_str(".zip");
-                        (dirname, zipsize)
-                    },
-                    _ => bail!(TransferError::UnsupportedOffer),
-                },
-                other => {
-                    bail!(TransferError::unexpected_message("offer", other));
-                },
-            };
-
-        validate_file_name(&filename)?;
-
-        Ok((filename, filesize, connector, their_abilities, their_hints))
+        let transit = match their_transit {
+            Some(transit) => transit,
+            None => match wormhole.receive_json::<PeerMessage>().await??.check_err()? {
+                PeerMessage::Transit(transit) => transit,
+                other => bail!(TransferError::unexpected_message("transit", other)),
+            },
+        };
+        Ok(PendingOffer::File {
+            filename,
+            filesize,
+            connector,
+            transit,
+        })
     });
 
     let cancel = std::pin::pin!(cancel);
     let result = cancel::cancellable_2(run, cancel).await;
     cancel::handle_run_result_noclose(wormhole, result)
         .await
-        .map(|inner: Option<_>| {
-            inner.map(
-                |((filename, filesize, connector, their_abilities, their_hints), wormhole, _)| {
-                    ReceiveRequest::new(
-                        filename,
-                        filesize,
-                        connector,
-                        their_abilities,
-                        their_hints,
-                        wormhole,
-                    )
+        .map(|inner| {
+            inner.map(|(offer, wormhole, _)| match offer {
+                PendingOffer::Text(message) => {
+                    ReceiveOffer::Text(super::ReceiveTextRequest { wormhole, message })
                 },
-            )
+                PendingOffer::File {
+                    filename,
+                    filesize,
+                    connector,
+                    transit,
+                } => ReceiveOffer::File(ReceiveRequest::new(
+                    filename,
+                    filesize,
+                    connector,
+                    transit.abilities_v1,
+                    transit.hints_v1,
+                    wormhole,
+                )),
+            })
         })
 }
 
@@ -885,5 +942,30 @@ mod test {
     fn test_transit_ack() {
         let f1 = TransitAck::new("ok", "deadbeaf");
         assert_eq!(f1.serialize(), "{\"ack\":\"ok\",\"sha256\":\"deadbeaf\"}");
+    }
+
+    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn text_ack_requires_exact_success() {
+        assert!(
+            AnswerMessage::MessageAck("ok".into())
+                .check_message_ack()
+                .is_ok()
+        );
+        for acknowledgement in ["", "OK", "ok\n", " ok", "no", "sí"] {
+            assert!(matches!(
+                AnswerMessage::MessageAck(acknowledgement.into()).check_message_ack(),
+                Err(TransferError::AckError)
+            ));
+        }
+    }
+
+    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn file_ack_cannot_acknowledge_text() {
+        assert!(matches!(
+            AnswerMessage::FileAck("ok".into()).check_message_ack(),
+            Err(TransferError::ProtocolUnexpectedMessage(_, _))
+        ));
     }
 }
