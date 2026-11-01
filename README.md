@@ -8,9 +8,10 @@ This is a Rust port of the Python version at <https://github.com/magic-wormhole/
 
 ## Comparison with the Python implementation
 
+Text messages and single files interoperate with Python's `wormhole` CLI.
+
 Features that are missing:
 
-- Text message sending and receiving
 - Native folder transfer (sent folders become `.tar` files; received Python folders become `.zip` files, both requiring manual extraction)
 - Tor support
 - Automatic mailbox reconnection and Python's experimental Dilation API

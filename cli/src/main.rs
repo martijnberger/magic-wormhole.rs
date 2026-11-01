@@ -80,6 +80,26 @@ struct CommonSenderArgs {
     files: Vec<PathBuf>,
 }
 
+// Unlike send-many, a single send can offer text instead of files.
+#[derive(Debug, Args)]
+struct SenderArgs {
+    /// Suggest a different name to the receiver to keep the file's actual name secret.
+    /// Not allowed when sending more than one file.
+    #[arg(long = "rename", visible_alias = "name", value_name = "FILE_NAME")]
+    file_name: Option<String>,
+    #[arg(
+        index = 1,
+        required_unless_present = "text",
+        num_args = 1..,
+        value_name = "FILENAME|DIRNAME",
+        value_hint = clap::ValueHint::AnyPath,
+    )]
+    files: Vec<PathBuf>,
+    /// Send text instead of files. Use - to read all UTF-8 text from stdin.
+    #[arg(long, value_name = "MESSAGE", conflicts_with_all = ["files", "file_name"])]
+    text: Option<String>,
+}
+
 // send, send-many, serve
 #[derive(Debug, Args)]
 struct CommonLeaderArgs {
@@ -177,7 +197,7 @@ enum ForwardCommand {
 
 #[derive(Debug, Subcommand)]
 enum WormholeCommand {
-    /// Send a file or a folder
+    /// Send text, files or a folder
     #[command(visible_alias = "tx")]
     Send {
         #[clap(flatten)]
@@ -185,9 +205,9 @@ enum WormholeCommand {
         #[clap(flatten)]
         common_leader: CommonLeaderArgs,
         #[clap(flatten)]
-        common_send: CommonSenderArgs,
+        common_send: SenderArgs,
     },
-    /// Receive a file or a folder
+    /// Receive text, a file or a folder
     #[command(visible_alias = "rx")]
     Receive {
         /// Accept file transfer without asking for confirmation
@@ -250,7 +270,7 @@ enum WormholeCommand {
     after_help = "Run a subcommand with `--help` to know how it's used."
 )]
 struct WormholeCli {
-    /// Enable logging to stdout, for debugging purposes
+    /// Enable logging to stderr, for debugging purposes
     #[arg(
         short = 'v',
         long = "verbose",
@@ -289,6 +309,7 @@ async fn async_main() -> eyre::Result<()> {
 
     if app.log {
         tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
             .with_max_level(tracing::Level::TRACE)
             .with_env_filter(EnvFilter::new(
                 "wormhole_rs=debug,magic_wormhole::core=trace,mio=debug,ws=error",
@@ -298,6 +319,7 @@ async fn async_main() -> eyre::Result<()> {
         tracing::trace!("Logging enabled.");
     } else {
         tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
             .with_max_level(tracing::Level::INFO)
             .with_env_filter(EnvFilter::new("mio=debug"))
             .with_target(false)
@@ -313,10 +335,31 @@ async fn async_main() -> eyre::Result<()> {
                     code_length,
                     no_qr,
                 },
-            common_send: CommonSenderArgs { file_name, files },
+            common_send:
+                SenderArgs {
+                    file_name,
+                    files,
+                    text,
+                },
             ..
         } => {
-            let offer = make_send_offer(files, file_name).await?;
+            let text = match text {
+                Some(text) => match util::cancellable(
+                    Box::pin(read_text_input(text, smol::Unblock::new(std::io::stdin()))),
+                    ctrlc_handler(),
+                )
+                .await
+                {
+                    Ok(message) => Some(message.wrap_err("Could not read text from stdin")?),
+                    Err(_) => return Ok(()),
+                },
+                None => None,
+            };
+            let offer = if text.is_none() {
+                Some(make_send_offer(files, file_name).await?)
+            } else {
+                None
+            };
 
             let transit_abilities = parse_transit_args(&common);
             let (wormhole, _code, relay_hints) = match util::cancellable(
@@ -338,7 +381,17 @@ async fn async_main() -> eyre::Result<()> {
                 Err(_) => return Ok(()),
             };
 
-            Box::pin(send(wormhole, relay_hints, offer, transit_abilities)).await?;
+            if let Some(message) = text {
+                transfer::send_text(wormhole, message, ctrlc_handler()).await?;
+            } else {
+                Box::pin(send(
+                    wormhole,
+                    relay_hints,
+                    offer.unwrap(),
+                    transit_abilities,
+                ))
+                .await?;
+            }
         },
         WormholeCommand::SendMany {
             tries,
@@ -392,6 +445,8 @@ async fn async_main() -> eyre::Result<()> {
             common_receiver: CommonReceiverArgs { file_path },
             ..
         } => {
+            // Keep stdout exclusively for the received text when used in a pipeline.
+            let mut term = Term::stderr();
             let transit_abilities = parse_transit_args(&common);
             let (wormhole, _code, relay_hints) = {
                 let connect_fut = Box::pin(parse_and_connect(
@@ -1021,6 +1076,48 @@ async fn send_many(
     Ok(())
 }
 
+async fn read_text_input(
+    text: String,
+    mut stdin: impl smol::io::AsyncRead + Unpin,
+) -> std::io::Result<String> {
+    use smol::io::AsyncReadExt;
+    if text != "-" {
+        return Ok(text);
+    }
+    let mut message = String::new();
+    stdin.read_to_string(&mut message).await?;
+    Ok(message)
+}
+
+async fn write_received_text(
+    stdout: &mut (impl smol::io::AsyncWrite + Unpin),
+    message: &str,
+    terminal: bool,
+) -> std::io::Result<()> {
+    use smol::io::AsyncWriteExt;
+    if terminal {
+        let mut start = 0;
+        for (index, character) in message.char_indices() {
+            if character.is_control() && !matches!(character, '\n' | '\t') {
+                stdout.write_all(&message.as_bytes()[start..index]).await?;
+                let mut escaped = [0; 10];
+                let mut length = 0;
+                for character in character.escape_default() {
+                    escaped[length] = character as u8;
+                    length += 1;
+                }
+                stdout.write_all(&escaped[..length]).await?;
+                start = index + character.len_utf8();
+            }
+        }
+        stdout.write_all(&message.as_bytes()[start..]).await?;
+    } else {
+        stdout.write_all(message.as_bytes()).await?;
+    }
+    stdout.write_all(b"\n").await?;
+    stdout.flush().await
+}
+
 async fn receive(
     wormhole: Wormhole,
     relay_hints: Vec<transit::RelayHint>,
@@ -1028,34 +1125,49 @@ async fn receive(
     noconfirm: bool,
     transit_abilities: transit::Abilities,
 ) -> eyre::Result<()> {
-    #[cfg(not(feature = "experimental-transfer-v2"))]
-    {
-        let req = transfer::request_file(wormhole, relay_hints, transit_abilities, ctrlc_handler())
-            .await
-            .wrap_err("Could not get an offer")?;
-        /* If None, the task got cancelled */
-        if let Some(req) = req {
-            receive_inner_v1(req, target_dir, noconfirm).await
-        } else {
+    let req = transfer::request_offer(wormhole, relay_hints, transit_abilities, ctrlc_handler())
+        .await
+        .wrap_err("Could not get an offer")?;
+    match req {
+        Some(transfer::ReceiveOffer::Text(req)) => {
+            let stdout = std::io::stdout();
+            let terminal = stdout.is_terminal();
+            let mut stdout = smol::Unblock::new(stdout);
+            let result = util::cancellable(
+                Box::pin(write_received_text(&mut stdout, req.message(), terminal)),
+                ctrlc_handler(),
+            )
+            .await;
+            let result = match result {
+                Ok(result) => result,
+                Err(_) => {
+                    let _ = req.reject().await;
+                    return Ok(());
+                },
+            };
+            if let Err(error) = result {
+                let _ = req.reject().await;
+                return Err(error).wrap_err("Could not write received text");
+            }
+            req.accept(ctrlc_handler()).await?;
             Ok(())
-        }
-    }
-    #[cfg(feature = "experimental-transfer-v2")]
-    {
-        let req = transfer::request(wormhole, relay_hints, transit_abilities, ctrlc_handler())
-            .await
-            .wrap_err("Could not get an offer")?;
-
-        match req {
-            Some(transfer::ReceiveRequest::V1(req)) => {
+        },
+        Some(transfer::ReceiveOffer::File(req)) => {
+            #[cfg(not(feature = "experimental-transfer-v2"))]
+            {
                 receive_inner_v1(req, target_dir, noconfirm).await
-            },
+            }
             #[cfg(feature = "experimental-transfer-v2")]
-            Some(transfer::ReceiveRequest::V2(req)) => {
-                receive_inner_v2(req, target_dir, noconfirm).await
-            },
-            None => Ok(()),
-        }
+            match req {
+                transfer::ReceiveRequest::V1(req) => {
+                    receive_inner_v1(req, target_dir, noconfirm).await
+                },
+                transfer::ReceiveRequest::V2(req) => {
+                    receive_inner_v2(req, target_dir, noconfirm).await
+                },
+            }
+        },
+        None => Ok(()),
     }
 }
 
@@ -1312,6 +1424,185 @@ fn should_use_color() -> bool {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn text_and_file_arguments_are_exclusive() {
+        for arguments in [
+            vec!["wormhole-rs", "send", "--text", "hello", "file"],
+            vec!["wormhole-rs", "send", "--text", "hello", "--rename", "name"],
+            vec!["wormhole-rs", "send", "--text", "", "--name", "name"],
+        ] {
+            assert_eq!(
+                WormholeCli::try_parse_from(arguments).unwrap_err().kind(),
+                clap::error::ErrorKind::ArgumentConflict,
+            );
+        }
+    }
+
+    #[test]
+    fn text_accepts_empty_and_stdin_arguments() {
+        for message in ["", "-", "hello\nworld"] {
+            let cli =
+                WormholeCli::try_parse_from(["wormhole-rs", "send", "--text", message]).unwrap();
+            let WormholeCommand::Send { common_send, .. } = cli.command else {
+                panic!("expected send");
+            };
+            assert_eq!(common_send.text.as_deref(), Some(message));
+            assert!(common_send.files.is_empty());
+        }
+    }
+
+    #[test]
+    fn send_commands_still_require_input() {
+        for command in ["send", "send-many"] {
+            assert_eq!(
+                WormholeCli::try_parse_from(["wormhole-rs", command])
+                    .unwrap_err()
+                    .kind(),
+                clap::error::ErrorKind::MissingRequiredArgument,
+            );
+            let cli =
+                WormholeCli::try_parse_from(["wormhole-rs", command, "--rename", "name", "file"])
+                    .unwrap();
+            let (files, file_name) = match cli.command {
+                WormholeCommand::Send { common_send, .. } => {
+                    assert!(common_send.text.is_none());
+                    (common_send.files, common_send.file_name)
+                },
+                WormholeCommand::SendMany { common_send, .. } => {
+                    (common_send.files, common_send.file_name)
+                },
+                _ => panic!("expected a send command"),
+            };
+            assert_eq!(files, vec![PathBuf::from("file")]);
+            assert_eq!(file_name.as_deref(), Some("name"));
+        }
+        assert_eq!(
+            WormholeCli::try_parse_from(["wormhole-rs", "send-many", "--text", "hello"])
+                .unwrap_err()
+                .kind(),
+            clap::error::ErrorKind::UnknownArgument,
+        );
+    }
+
+    #[test]
+    fn stdin_text_preserves_complete_utf8_input() {
+        smol::block_on(async {
+            for message in ["", " \nhello\t世界\r\n\n"] {
+                assert_eq!(
+                    read_text_input("-".into(), message.as_bytes())
+                        .await
+                        .unwrap(),
+                    message,
+                );
+            }
+            assert_eq!(
+                read_text_input("literal".into(), &b"ignored"[..])
+                    .await
+                    .unwrap(),
+                "literal",
+            );
+            assert_eq!(
+                read_text_input("-".into(), &b"\xff"[..])
+                    .await
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::InvalidData,
+            );
+        });
+    }
+
+    #[test]
+    fn stdin_wait_can_be_cancelled() {
+        smol::block_on(async {
+            struct PendingReader;
+            impl smol::io::AsyncRead for PendingReader {
+                fn poll_read(
+                    self: Pin<&mut Self>,
+                    _: &mut std::task::Context<'_>,
+                    _: &mut [u8],
+                ) -> std::task::Poll<std::io::Result<usize>> {
+                    std::task::Poll::Pending
+                }
+            }
+            assert!(
+                util::cancellable(
+                    Box::pin(read_text_input("-".into(), PendingReader)),
+                    std::future::ready(()),
+                )
+                .await
+                .is_err()
+            );
+        });
+    }
+
+    #[test]
+    fn text_output_propagates_write_and_flush_errors() {
+        struct FailingWriter {
+            fail_on_flush: bool,
+        }
+        impl smol::io::AsyncWrite for FailingWriter {
+            fn poll_write(
+                self: Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+                bytes: &[u8],
+            ) -> std::task::Poll<std::io::Result<usize>> {
+                std::task::Poll::Ready(if self.fail_on_flush {
+                    Ok(bytes.len())
+                } else {
+                    Err(std::io::ErrorKind::BrokenPipe.into())
+                })
+            }
+
+            fn poll_flush(
+                self: Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+            }
+
+            fn poll_close(
+                self: Pin<&mut Self>,
+                context: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                self.poll_flush(context)
+            }
+        }
+
+        smol::block_on(async {
+            for fail_on_flush in [false, true] {
+                let error =
+                    write_received_text(&mut FailingWriter { fail_on_flush }, "text", false)
+                        .await
+                        .unwrap_err();
+                assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+            }
+        });
+    }
+
+    #[test]
+    fn text_output_is_pipeline_safe_and_terminal_safe() {
+        smol::block_on(async {
+            let message = "世界\n\t\x1b[31m\r\0\u{009b}31m";
+            let mut piped = Vec::new();
+            write_received_text(&mut piped, message, false)
+                .await
+                .unwrap();
+            assert_eq!(piped, format!("{message}\n").as_bytes());
+
+            let mut terminal = Vec::new();
+            write_received_text(&mut terminal, message, true)
+                .await
+                .unwrap();
+            assert_eq!(
+                String::from_utf8(terminal).unwrap(),
+                "世界\n\t\\u{1b}[31m\\r\\u{0}\\u{9b}31m\n",
+            );
+            let mut empty = Vec::new();
+            write_received_text(&mut empty, "", false).await.unwrap();
+            assert_eq!(empty, b"\n");
+        });
+    }
 
     #[test]
     fn test_shell_completion() {

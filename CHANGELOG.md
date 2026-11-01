@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - lib: Support encrypted WebSocket connections through `futures-rustls` with configurable certificate trust stores.
+- lib: Add Python-compatible mailbox-only text transfers through `transfer::send_text` and `transfer::request_offer`, with explicit acceptance/rejection through `ReceiveTextRequest`. Existing file-only receive APIs continue to reject text offers.
+- cli: Add `send --text MESSAGE` and `send --text -` for complete UTF-8 stdin, including empty messages. `receive` detects text automatically, escapes terminal controls, preserves piped text, and acknowledges only after successful output.
 
 ### Security
 

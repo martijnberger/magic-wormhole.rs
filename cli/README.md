@@ -2,7 +2,7 @@
 
 A Rust implementation of the classic `magic-wormhole` command line client.
 
-This package provides a library and a command-line tool named wormhole-rs, which makes it possible to get arbitrary-sized files and directories from one computer to another. Directories are transferred as archives requiring manual extraction; text message transfers are not supported. The two endpoints are identified by using identical "wormhole codes": in general, the sending machine generates and displays the code, which must then be typed into the receiving machine.
+This package provides a library and a command-line tool named `wormhole-rs`, which transfers text messages, arbitrary-sized files, and directories between computers. Directories are transferred as archives requiring manual extraction. The two endpoints use identical "wormhole codes": normally the sender generates and displays a code, which the receiver then enters.
 
 ## Installation
 
@@ -26,23 +26,25 @@ cargo install --locked magic-wormhole-cli
 
 ## Usage
 
-```text
-Get things from one computer to another, safely
+```bash
+# Send files or a folder.
+wormhole-rs send <PATH>
 
-Usage: wormhole-rs [OPTIONS] <COMMAND>
+# Send a text message, including an empty message with --text "".
+wormhole-rs send --text "Hello from Rust"
 
-Commands:
-  send       Send a file or a folder [aliases: tx]
-  receive    Receive a file or a folder [aliases: rx]
-  send-many  Send a file to many recipients
-  forward    Forward ports from one machine to another
+# Read the complete UTF-8 message from stdin without trimming whitespace.
+printf '%s' 'Hello from stdin' | wormhole-rs send --text -
 
-Options:
-  -v, --verbose  Enable logging to stdout, for debugging purposes
-  -h, --help     Print help
-  -V, --version  Print version
-
-Run a subcommand with `--help` to know how it's used.
-To send files, use `wormhole send <PATH>`.
-To receive files, use `wormhole receive <CODE>`.
+# Receive either text or a file using the sender's code.
+wormhole-rs receive <CODE>
 ```
+
+`--text` cannot be combined with file paths or `--rename`. `send-many` remains file-only.
+Text travels over the encrypted mailbox without a transit connection. Receiving text
+prints it to stdout with a trailing newline and creates no files. Terminal output
+escapes control characters other than newline and tab; piped output preserves the
+original text. Diagnostics go to stderr. The sender receives a success acknowledgement
+only after the receiver writes and flushes the text.
+
+Run `wormhole-rs --help` or a subcommand with `--help` for additional options.

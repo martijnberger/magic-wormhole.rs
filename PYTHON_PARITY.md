@@ -21,7 +21,7 @@ Rust upstream uses `main`, not `master`. The fork-only commits modernize depende
 | --- | --- | --- |
 | Classic protocol | SPAKE2, HKDF, Secretbox, classic transit and file-transfer acknowledgements | Compatible classic protocol |
 | Single files | Supported; live interoperability verified in both directions | Supported |
-| Text | Sending and receiving unsupported | Supports text and reading text from stdin |
+| Text | Unsupported at review; implemented in the follow-up below | Supports text and reading text from stdin |
 | Sending directories | Ordinary file offer containing a `.tar` archive | Compressed directory offer |
 | Receiving directories | Saves Python directory offers as `.zip`; no automatic extraction | Extracts received directories |
 | Direct connectivity | STUN-assisted TCP NAT traversal, direct/relay selection | Direct connections and relay fallback; no equivalent STUN path identified |
@@ -69,7 +69,7 @@ The temporary mailbox, transfer outputs, Python installation, and comparison clo
 
 ## Suggested parity work
 
-1. **Text transfer:** add public send/receive support, handle message-only offers without requiring transit, and exchange the message acknowledgement. Prove interoperability in both directions, including stdin and empty text.
+1. **Text transfer — implemented:** see the follow-up below for APIs, CLI behavior, and verification.
 2. **Native directories:** exchange Python-compatible directory offers and ZIP content, and extract safely. Prove both directions, empty/nested directories, filenames, and permissions where supported.
 3. **CLI workflows:** decide which Python workflows matter: verification prompt, receiver allocation, SSH-key exchange, and migration guidance for option/environment differences. These are product choices, not prerequisites for ordinary file interoperability.
 4. **Reconnection and Dilation:** treat as a separate architecture project. Define lifecycle, subchannel negotiation, ordering, recovery, and interoperability requirements before implementing; do not relabel Rust transfer-v2 as Dilation.
@@ -86,3 +86,29 @@ The follow-up hardening moves classic-offer filename validation into the library
 Verification includes a failing-before/passing-after nested-directory traversal regression, transfer tests with default and experimental features, CLI tests with experimental features, and live rejection of relative, absolute, and Windows-style paths. A normal Unicode/spaced filename still transfers with identical bytes. Windows-specific drive/stream/trailing-dot validation has conditional regression coverage but was not executed on Windows during this Linux review.
 
 Name validation prevents peer-supplied path traversal; it does not protect library helpers against pre-existing or concurrently replaced symlinks in a locally untrusted destination. These helpers require a trusted destination directory. See the Unreleased Security section in `CHANGELOG.md` for shipped behavior. This finding does not change the feature-parity conclusions above and is not a claim that the implementation has undergone a full security audit.
+
+## Text-transfer implementation follow-up
+
+Text transfers now use the Python-compatible `offer.message` / `answer.message_ack`
+exchange over the encrypted mailbox, without initializing transit. The sender requires
+the exact acknowledgement `"ok"` and tolerates unsolicited classic transit hints.
+`transfer::send_text` sends text; `transfer::request_offer` distinguishes text and file
+offers. `ReceiveTextRequest` exposes the message and explicit accept/reject operations.
+Existing file-only receive APIs retain their behavior and reject text.
+
+The CLI supports `send --text MESSAGE`, including an empty string, and `send --text -`
+for complete UTF-8 stdin without trimming. `receive` detects text automatically and
+creates no output files or directories. It escapes terminal controls, preserves text
+when piped, appends a newline, and acknowledges only after writing and flushing stdout.
+Text cannot be combined with file paths or `--rename`; `send-many` remains file-only.
+
+Live checks against the same pinned Python revision covered both directions,
+Unicode/multiline text, empty messages and stdin, unsolicited transit hints, incorrect
+acknowledgements, peer rejection, public-API cancellation, output failure, and a real
+terminal receiving control characters. Ordinary bidirectional file transfers retained
+identical bytes and Unicode/spaced filenames. Python's CLI prompts for input when
+given an empty `--text ""`, so Python-to-Rust empty-message coverage used Python's API.
+
+The next parity target remains **native directory transfers**: Python-compatible
+directory offers and ZIP content in both directions, with safe extraction rather
+than automatic extraction of untrusted paths without validation.
